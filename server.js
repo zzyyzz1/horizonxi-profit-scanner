@@ -43,6 +43,7 @@ const TOP20_SCAN_COOLDOWN_MS =
 const EXCLUDED_CATEGORIES =
   new Set([
     "automation"
+    "automatom"
   ]);
 
 
