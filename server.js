@@ -12,23 +12,36 @@ const MARKET_URL =
 const CRAFT_ITEM_URL = (itemId) =>
   `https://www.psxi.gg/api/v1/craft/horizonxi/item/${itemId}`;
 
+
+/* =========================================================
+   CACHE
+========================================================= */
+
 let marketCache = null;
 let marketCacheTime = 0;
 
-const MARKET_CACHE_MS = 5 * 60 * 1000;
+const MARKET_CACHE_MS =
+  10 * 60 * 1000;
+
+/*
+  Craft results stay cached in memory while
+  the Render process remains alive.
+*/
+
+const craftCache = new Map();
 
 
 /* =========================================================
    VERIFIED STACK SIZES
 
    IMPORTANT:
-   لا نفترض stack size إذا ما نعرفه.
-   Unknown items fall back to Single pricing.
+   Unknown stack sizes NEVER use guessed stack prices.
+   They fall back to Single pricing.
 ========================================================= */
 
 const STACK_SIZE_BY_ID = {
 
-  // Crystals
+  /* Crystals */
   4096: 12, // Fire Crystal
   4097: 12, // Ice Crystal
   4098: 12, // Wind Crystal
@@ -38,7 +51,7 @@ const STACK_SIZE_BY_ID = {
   4102: 12, // Light Crystal
   4103: 12, // Dark Crystal
 
-  // Ice Staff recipe materials
+  /* Verified materials used during testing */
   719: 12,  // Ebony Lumber
   1300: 12  // Ice Bead
 };
@@ -51,10 +64,14 @@ const STACK_SIZE_BY_ID = {
 function headers() {
   return {
     accept: "application/json",
-    "user-agent": "HorizonXI-Profit-Scanner/1.0",
-    Authorization: `Bearer ${PSXI_TOKEN}`
+    "user-agent":
+      "HorizonXI-Profit-Scanner/1.0",
+
+    Authorization:
+      `Bearer ${PSXI_TOKEN}`
   };
 }
+
 
 async function psxiFetch(url) {
 
@@ -73,9 +90,16 @@ async function psxiFetch(url) {
     await response.text();
 
   if (!response.ok) {
-    throw new Error(
-      `PSXI ${response.status}: ${text.slice(0, 400)}`
-    );
+
+    const error =
+      new Error(
+        `PSXI ${response.status}: ${text.slice(0, 300)}`
+      );
+
+    error.status =
+      response.status;
+
+    throw error;
   }
 
   return JSON.parse(text);
@@ -83,12 +107,13 @@ async function psxiFetch(url) {
 
 
 /* =========================================================
-   MARKET CACHE
+   MARKET
 ========================================================= */
 
 async function getMarket() {
 
-  const now = Date.now();
+  const now =
+    Date.now();
 
   if (
     marketCache &&
@@ -103,10 +128,12 @@ async function getMarket() {
       MARKET_URL
     );
 
-  marketCacheTime = now;
+  marketCacheTime =
+    now;
 
   return marketCache;
 }
+
 
 function getMarketItems(market) {
 
@@ -139,20 +166,24 @@ function getMarketItems(market) {
 ========================================================= */
 
 function normalizeName(value) {
-  return String(value || "")
+
+  return String(
+    value || ""
+  )
     .trim()
     .toLowerCase();
 }
+
 
 function findItem(
   items,
   search
 ) {
 
-  const query =
+  const q =
     normalizeName(search);
 
-  if (!query) {
+  if (!q) {
     return null;
   }
 
@@ -161,7 +192,7 @@ function findItem(
       item =>
         normalizeName(
           item.itemName
-        ) === query
+        ) === q
     );
 
   if (exact) {
@@ -172,9 +203,10 @@ function findItem(
     item =>
       normalizeName(
         item.itemName
-      ).includes(query)
+      ).includes(q)
   );
 }
+
 
 function findItemById(
   items,
@@ -190,64 +222,10 @@ function findItemById(
 
 
 /* =========================================================
-   STACK DATA
+   PRICE HELPERS
 ========================================================= */
 
-function getKnownStackSize(
-  item
-) {
-
-  if (!item) {
-    return null;
-  }
-
-  const id =
-    Number(item.itemId);
-
-  return (
-    STACK_SIZE_BY_ID[id] ??
-    null
-  );
-}
-
-function hasRealStackData(
-  item
-) {
-
-  const stack =
-    item?.ah?.stack || {};
-
-  return (
-    stack.lastSale != null ||
-    stack.median != null ||
-    stack.avg != null ||
-    Number(
-      stack.volume || 0
-    ) > 0 ||
-    Number(
-      item?.ah
-        ?.currentStackStock || 0
-    ) > 0
-  );
-}
-
-function isStackable(
-  item
-) {
-
-  return hasRealStackData(
-    item
-  );
-}
-
-
-/* =========================================================
-   RAW PRICES
-========================================================= */
-
-function getSinglePrice(
-  item
-) {
+function getSinglePrice(item) {
 
   const single =
     item?.ah?.single || {};
@@ -265,9 +243,8 @@ function getSinglePrice(
   );
 }
 
-function getStackPrice(
-  item
-) {
+
+function getStackPrice(item) {
 
   const stack =
     item?.ah?.stack || {};
@@ -286,22 +263,54 @@ function getStackPrice(
 }
 
 
-/* =========================================================
-   MATERIAL PURCHASE OPTIMIZER
-========================================================= */
-
-function getBestMaterialPrice(
-  item
-) {
+function getKnownStackSize(item) {
 
   if (!item) {
+    return null;
+  }
+
+  return (
+    STACK_SIZE_BY_ID[
+      Number(item.itemId)
+    ] ?? null
+  );
+}
+
+
+function hasStackData(item) {
+
+  const stack =
+    item?.ah?.stack || {};
+
+  return (
+    stack.lastSale != null ||
+    stack.avg != null ||
+    stack.median != null ||
+    Number(
+      stack.volume || 0
+    ) > 0 ||
+    Number(
+      item?.ah?.currentStackStock || 0
+    ) > 0
+  );
+}
+
+
+function isStackable(item) {
+  return hasStackData(item);
+}
+
+
+/* =========================================================
+   MATERIAL PRICE OPTIMIZER
+========================================================= */
+
+function getBestMaterialPrice(item) {
+
+  if (!item) {
+
     return {
       found: false,
-      stackable: false,
-      stackSize: null,
-      singlePrice: null,
-      stackPrice: null,
-      stackUnitPrice: null,
       selectedUnitPrice: null,
       selectedMode: "missing"
     };
@@ -319,7 +328,8 @@ function getBestMaterialPrice(
   const stackable =
     isStackable(item);
 
-  let stackUnitPrice = null;
+  let stackUnitPrice =
+    null;
 
   if (
     stackable &&
@@ -332,13 +342,12 @@ function getBestMaterialPrice(
       stackSize;
   }
 
-  let selectedUnitPrice = null;
+  let selectedUnitPrice =
+    null;
+
   let selectedMode =
     "unpriced";
 
-  /*
-    Compare Single vs Stack-per-unit.
-  */
 
   if (
     singlePrice != null &&
@@ -386,6 +395,7 @@ function getBestMaterialPrice(
       "stack";
   }
 
+
   return {
 
     found: true,
@@ -401,16 +411,14 @@ function getBestMaterialPrice(
     stackUnitPrice:
       stackUnitPrice != null
         ? Number(
-            stackUnitPrice
-              .toFixed(2)
+            stackUnitPrice.toFixed(2)
           )
         : null,
 
     selectedUnitPrice:
       selectedUnitPrice != null
         ? Number(
-            selectedUnitPrice
-              .toFixed(2)
+            selectedUnitPrice.toFixed(2)
           )
         : null,
 
@@ -418,95 +426,38 @@ function getBestMaterialPrice(
 
     singleStock:
       Number(
-        item?.ah
-          ?.currentStock || 0
+        item?.ah?.currentStock || 0
       ),
 
     stackStock:
       Number(
-        item?.ah
-          ?.currentStackStock || 0
+        item?.ah?.currentStackStock || 0
       )
   };
 }
 
 
 /* =========================================================
-   OUTPUT SALE PRICE
-
-   Output is different from material buying.
-
-   Non-stackable gear/weapons:
-   Single only.
+   LIQUIDITY
 ========================================================= */
 
-function getOutputPrice(
-  item
-) {
-
-  const singlePrice =
-    getSinglePrice(item);
-
-  const stackable =
-    isStackable(item);
-
-  const stackSize =
-    getKnownStackSize(item);
-
-  const stackPrice =
-    getStackPrice(item);
-
-  let saleMode =
-    "single-only";
-
-  if (stackable) {
-    saleMode =
-      "single";
-  }
-
-  return {
-
-    stackable,
-
-    stackSize,
-
-    singlePrice,
-
-    stackPrice,
-
-    saleMode,
-
-    unitPrice:
-      singlePrice
-  };
-}
-
-
-/* =========================================================
-   LIQUIDITY ENGINE
-========================================================= */
-
-function getLiquidityInfo(
-  item
-) {
+function getLiquidityInfo(item) {
 
   const stock =
     Number(
-      item?.ah
-        ?.currentStock || 0
+      item?.ah?.currentStock || 0
     );
 
   const volume7d =
     Number(
-      item?.ah
-        ?.single
-        ?.volume || 0
+      item?.ah?.single?.volume || 0
     );
 
   const salesPerDay =
     volume7d / 7;
 
-  let daysToSell = null;
+  let daysToSell =
+    null;
 
   if (salesPerDay > 0) {
 
@@ -547,11 +498,6 @@ function getLiquidityInfo(
     daysToSell != null &&
     daysToSell > 14;
 
-  /*
-    Minimum liquidity rule
-    for Top 20.
-  */
-
   const top20Eligible =
     volume7d >= 14 &&
     (
@@ -567,15 +513,13 @@ function getLiquidityInfo(
 
     salesPerDay:
       Number(
-        salesPerDay
-          .toFixed(2)
+        salesPerDay.toFixed(2)
       ),
 
     daysToSell:
       daysToSell != null
         ? Number(
-            daysToSell
-              .toFixed(2)
+            daysToSell.toFixed(2)
           )
         : null,
 
@@ -589,7 +533,216 @@ function getLiquidityInfo(
 
 
 /* =========================================================
-   CRAFT PARSING
+   LAST SALE AGE
+========================================================= */
+
+function getLastSaleAgeDays(item) {
+
+  const date =
+    item?.ah?.single
+      ?.lastSaleDate;
+
+  if (!date) {
+    return null;
+  }
+
+  const parsed =
+    new Date(date);
+
+  if (
+    Number.isNaN(
+      parsed.getTime()
+    )
+  ) {
+    return null;
+  }
+
+  const diff =
+    Date.now() -
+    parsed.getTime();
+
+  return Number(
+    (
+      diff /
+      86400000
+    ).toFixed(2)
+  );
+}
+
+
+/* =========================================================
+   MARKET CANDIDATE FILTER
+
+   BEFORE spending Craft API requests,
+   remove dead / slow / saturated items.
+========================================================= */
+
+function buildCandidates(items) {
+
+  const candidates =
+    [];
+
+  for (
+    const item
+    of items
+  ) {
+
+    const price =
+      getSinglePrice(item);
+
+    if (
+      price == null ||
+      price <= 0
+    ) {
+      continue;
+    }
+
+    const liquidity =
+      getLiquidityInfo(item);
+
+    /*
+      Require meaningful movement.
+    */
+
+    if (
+      liquidity.volume7d < 14
+    ) {
+      continue;
+    }
+
+    /*
+      Reject heavily saturated markets.
+    */
+
+    if (
+      liquidity.daysToSell != null &&
+      liquidity.daysToSell > 14
+    ) {
+      continue;
+    }
+
+    const lastSaleAge =
+      getLastSaleAgeDays(item);
+
+    /*
+      Recent sale required.
+    */
+
+    if (
+      lastSaleAge != null &&
+      lastSaleAge > 14
+    ) {
+      continue;
+    }
+
+    /*
+      Avoid spending craft calls
+      on extremely cheap outputs.
+    */
+
+    if (price < 1000) {
+      continue;
+    }
+
+    /*
+      Market potential before
+      knowing material costs.
+    */
+
+    const marketPotential =
+      price *
+      liquidity.salesPerDay;
+
+    candidates.push({
+
+      item,
+
+      price,
+
+      liquidity,
+
+      lastSaleAge,
+
+      marketPotential
+    });
+  }
+
+
+  candidates.sort(
+    (a, b) =>
+      b.marketPotential -
+      a.marketPotential
+  );
+
+  return candidates;
+}
+
+
+/* =========================================================
+   CRAFT CACHE
+========================================================= */
+
+async function getCraftData(
+  itemId
+) {
+
+  const id =
+    Number(itemId);
+
+  if (
+    craftCache.has(id)
+  ) {
+
+    return craftCache.get(id);
+  }
+
+  try {
+
+    const data =
+      await psxiFetch(
+        CRAFT_ITEM_URL(id)
+      );
+
+    craftCache.set(
+      id,
+      {
+        ok: true,
+        data
+      }
+    );
+
+    return {
+      ok: true,
+      data
+    };
+
+  } catch (error) {
+
+    /*
+      Cache non-craftable / failed items
+      so we do not repeatedly waste API requests.
+    */
+
+    craftCache.set(
+      id,
+      {
+        ok: false,
+        error:
+          error.message
+      }
+    );
+
+    return {
+      ok: false,
+      error:
+        error.message
+    };
+  }
+}
+
+
+/* =========================================================
+   CRAFT PARSER
 ========================================================= */
 
 function extractRecipes(
@@ -645,61 +798,28 @@ function extractRecipes(
 
 
 /* =========================================================
-   PROFIT ENGINE
+   ANALYZE ONE RECIPE
 ========================================================= */
 
-async function calculateProfit(
-  search
+function analyzeRecipe(
+  outputItem,
+  recipeEntry,
+  marketItems
 ) {
 
-  const market =
-    await getMarket();
-
-  const items =
-    getMarketItems(
-      market
-    );
-
-  const outputItem =
-    findItem(
-      items,
-      search
-    );
-
-  if (!outputItem) {
-
-    throw new Error(
-      `Output item not found: ${search}`
-    );
-  }
-
-  const craftData =
-    await psxiFetch(
-      CRAFT_ITEM_URL(
-        outputItem.itemId
-      )
-    );
-
-  const recipes =
-    extractRecipes(
-      craftData
-    );
-
-  if (!recipes.length) {
-
-    throw new Error(
-      `No recipes found for ${outputItem.itemName}`
-    );
-  }
-
-  const entry =
-    recipes[0];
-
   const recipe =
-    entry.recipe;
+    recipeEntry.recipe;
 
-  const tiers =
-    entry.tiers;
+  const outputPrice =
+    getSinglePrice(
+      outputItem
+    );
+
+  if (
+    outputPrice == null
+  ) {
+    return null;
+  }
 
   const outputQty =
     Number(
@@ -707,41 +827,21 @@ async function calculateProfit(
       1
     );
 
-  const outputPrice =
-    getOutputPrice(
-      outputItem
-    );
-
-  if (
-    outputPrice.unitPrice ==
-    null
-  ) {
-
-    throw new Error(
-      "Output has no usable Single sale price"
-    );
-  }
-
   const saleRevenue =
-    outputPrice.unitPrice *
+    outputPrice *
     outputQty;
 
-
-  /* =====================================================
-     MATERIALS
-  ===================================================== */
-
-  const materials = [];
-
-  let materialCost = 0;
+  let materialCost =
+    0;
 
   let missingPrice =
     false;
 
+  const materials =
+    [];
 
-  /* -------------------------
-     Crystal
-  ------------------------- */
+
+  /* Crystal */
 
   if (
     recipe?.crystal?.name
@@ -749,15 +849,15 @@ async function calculateProfit(
 
     const crystalItem =
       findItemById(
-        items,
+        marketItems,
         recipe.crystal.id
       ) ||
       findItem(
-        items,
+        marketItems,
         recipe.crystal.name
       );
 
-    const price =
+    const pricing =
       getBestMaterialPrice(
         crystalItem
       );
@@ -765,8 +865,8 @@ async function calculateProfit(
     const qty = 1;
 
     const total =
-      price.selectedUnitPrice != null
-        ? price.selectedUnitPrice *
+      pricing.selectedUnitPrice != null
+        ? pricing.selectedUnitPrice *
           qty
         : null;
 
@@ -794,46 +894,31 @@ async function calculateProfit(
 
       qty,
 
-      stackable:
-        price.stackable,
-
       stackSize:
-        price.stackSize,
+        pricing.stackSize,
 
       singlePrice:
-        price.singlePrice,
+        pricing.singlePrice,
 
       stackPrice:
-        price.stackPrice,
+        pricing.stackPrice,
 
       stackUnitPrice:
-        price.stackUnitPrice,
+        pricing.stackUnitPrice,
 
       bestUnitPrice:
-        price.selectedUnitPrice,
+        pricing.selectedUnitPrice,
 
       purchaseMode:
-        price.selectedMode,
+        pricing.selectedMode,
 
       totalCost:
-        total != null
-          ? Number(
-              total.toFixed(2)
-            )
-          : null,
-
-      singleStock:
-        price.singleStock,
-
-      stackStock:
-        price.stackStock
+        total
     });
   }
 
 
-  /* -------------------------
-     Ingredients
-  ------------------------- */
+  /* Ingredients */
 
   for (
     const ingredient
@@ -841,19 +926,19 @@ async function calculateProfit(
     []
   ) {
 
-    const marketItem =
+    const ingredientItem =
       findItemById(
-        items,
+        marketItems,
         ingredient.id
       ) ||
       findItem(
-        items,
+        marketItems,
         ingredient.name
       );
 
-    const price =
+    const pricing =
       getBestMaterialPrice(
-        marketItem
+        ingredientItem
       );
 
     const qty =
@@ -863,8 +948,8 @@ async function calculateProfit(
       );
 
     const total =
-      price.selectedUnitPrice != null
-        ? price.selectedUnitPrice *
+      pricing.selectedUnitPrice != null
+        ? pricing.selectedUnitPrice *
           qty
         : null;
 
@@ -892,81 +977,58 @@ async function calculateProfit(
 
       qty,
 
-      stackable:
-        price.stackable,
-
       stackSize:
-        price.stackSize,
+        pricing.stackSize,
 
       singlePrice:
-        price.singlePrice,
+        pricing.singlePrice,
 
       stackPrice:
-        price.stackPrice,
+        pricing.stackPrice,
 
       stackUnitPrice:
-        price.stackUnitPrice,
+        pricing.stackUnitPrice,
 
       bestUnitPrice:
-        price.selectedUnitPrice,
+        pricing.selectedUnitPrice,
 
       purchaseMode:
-        price.selectedMode,
+        pricing.selectedMode,
 
       totalCost:
-        total != null
-          ? Number(
-              total.toFixed(2)
-            )
-          : null,
-
-      singleStock:
-        price.singleStock,
-
-      stackStock:
-        price.stackStock
+        total
     });
   }
 
 
-  /* =====================================================
-     PROFIT
-  ===================================================== */
+  if (missingPrice) {
+    return null;
+  }
 
-  const finalMaterialCost =
-    missingPrice
-      ? null
-      : Number(
-          materialCost
-            .toFixed(2)
-        );
+
+  materialCost =
+    Number(
+      materialCost.toFixed(2)
+    );
 
   const grossProfit =
-    finalMaterialCost != null
-      ? Number(
-          (
-            saleRevenue -
-            finalMaterialCost
-          ).toFixed(2)
-        )
-      : null;
+    Number(
+      (
+        saleRevenue -
+        materialCost
+      ).toFixed(2)
+    );
 
   const marginPct =
-    grossProfit != null &&
-    finalMaterialCost > 0
+    materialCost > 0
       ? Number(
           (
             grossProfit /
-            finalMaterialCost *
+            materialCost *
             100
           ).toFixed(2)
         )
       : null;
-
-
-  /* =====================================================
-     LIQUIDITY
-  ===================================================== */
 
   const liquidity =
     getLiquidityInfo(
@@ -974,183 +1036,451 @@ async function calculateProfit(
     );
 
 
-  /* =====================================================
-     OPPORTUNITY SCORE
-  ===================================================== */
-
-  let opportunityScore =
-    null;
+  /*
+    Hard rules for Top 20.
+  */
 
   if (
-    grossProfit != null &&
-    grossProfit > 0
+    grossProfit <= 0
   ) {
+    return null;
+  }
 
-    const profitScore =
-      Math.min(
-        grossProfit / 1000,
-        100
-      );
+  if (
+    !liquidity.top20Eligible
+  ) {
+    return null;
+  }
 
-    const marginScore =
-      Math.min(
-        Math.max(
-          marginPct || 0,
-          0
-        ),
-        100
-      );
-
-    const speedScore =
-      Math.min(
-        liquidity.salesPerDay *
-          10,
-        100
-      );
-
-    let saturationPenalty =
-      0;
-
-    if (
-      liquidity.saturated
-    ) {
-      saturationPenalty =
-        35;
-    }
-
-    opportunityScore =
-      profitScore * 0.45 +
-      marginScore * 0.20 +
-      speedScore * 0.35 -
-      saturationPenalty;
-
-    opportunityScore =
-      Number(
-        Math.max(
-          opportunityScore,
-          0
-        ).toFixed(2)
-      );
+  if (
+    liquidity.saturated
+  ) {
+    return null;
   }
 
 
   /* =====================================================
-     RESULT
+     OPPORTUNITY SCORE
+
+     Profit       40%
+     Speed        30%
+     Margin       15%
+     Low stock    15%
   ===================================================== */
+
+  const profitScore =
+    Math.min(
+      grossProfit / 1000,
+      100
+    );
+
+  const speedScore =
+    Math.min(
+      liquidity.salesPerDay *
+        10,
+      100
+    );
+
+  const marginScore =
+    Math.min(
+      Math.max(
+        marginPct || 0,
+        0
+      ),
+      100
+    );
+
+  let stockScore =
+    100;
+
+  if (
+    liquidity.daysToSell != null
+  ) {
+
+    stockScore =
+      Math.max(
+        0,
+        100 -
+        (
+          liquidity.daysToSell /
+          14 *
+          100
+        )
+      );
+  }
+
+
+  let score =
+
+    profitScore * 0.40 +
+
+    speedScore * 0.30 +
+
+    marginScore * 0.15 +
+
+    stockScore * 0.15;
+
+
+  score =
+    Number(
+      score.toFixed(2)
+    );
+
 
   return {
 
-    output: {
+    itemId:
+      outputItem.itemId,
 
-      itemId:
-        outputItem.itemId,
+    itemName:
+      outputItem.itemName,
 
-      itemName:
-        outputItem.itemName,
+    categorySlug:
+      outputItem.categorySlug,
 
-      qty:
-        outputQty,
+    recipeId:
+      recipe.id,
 
-      stackable:
-        outputPrice.stackable,
+    craftSkills:
+      recipe.skills,
 
-      stackSize:
-        outputPrice.stackSize,
+    outputQty,
 
-      saleMode:
-        outputPrice.saleMode,
+    salePrice:
+      outputPrice,
 
-      singlePrice:
-        outputPrice.singlePrice,
+    saleRevenue,
 
-      stackPrice:
-        outputPrice.stackPrice,
+    materialCost,
 
-      unitPriceUsed:
-        outputPrice.unitPrice,
-
-      revenue:
-        saleRevenue,
-
-      volume7d:
-        liquidity.volume7d,
-
-      stock:
-        liquidity.stock,
-
-      asOf:
-        outputItem.asOf
-    },
-
-
-    recipe: {
-
-      recipeId:
-        recipe.id,
-
-      result:
-        recipe.result,
-
-      crystal:
-        recipe.crystal,
-
-      ingredients:
-        recipe.ingredients,
-
-      skills:
-        recipe.skills,
-
-      tiers
-    },
-
-
-    materials,
-
-
-    totals: {
-
-      materialCost:
-        finalMaterialCost,
-
-      saleRevenue,
-
+    profit:
       grossProfit,
 
-      marginPct
-    },
+    marginPct,
+
+    volume7d:
+      liquidity.volume7d,
+
+    salesPerDay:
+      liquidity.salesPerDay,
+
+    currentStock:
+      liquidity.stock,
+
+    daysToSell:
+      liquidity.daysToSell,
+
+    liquidity:
+      liquidity.liquidity,
+
+    saturated:
+      liquidity.saturated,
+
+    score,
+
+    lastSaleDate:
+      outputItem?.ah?.single
+        ?.lastSaleDate ??
+      null,
+
+    asOf:
+      outputItem.asOf,
+
+    materials
+  };
+}
 
 
-    liquidity,
+/* =========================================================
+   ANALYZE ONE CRAFT ITEM
+========================================================= */
 
+async function analyzeCraftItem(
+  item,
+  marketItems
+) {
 
-    opportunity: {
+  const craftResult =
+    await getCraftData(
+      item.itemId
+    );
 
-      eligibleForTop20:
+  if (
+    !craftResult.ok
+  ) {
+    return [];
+  }
 
-        liquidity.top20Eligible &&
+  const recipes =
+    extractRecipes(
+      craftResult.data
+    );
 
-        !liquidity.saturated &&
+  if (
+    !recipes.length
+  ) {
+    return [];
+  }
 
-        grossProfit != null &&
+  const results =
+    [];
 
-        grossProfit > 0,
+  for (
+    const recipe
+    of recipes
+  ) {
 
-      score:
-        opportunityScore
-    },
+    const result =
+      analyzeRecipe(
+        item,
+        recipe,
+        marketItems
+      );
 
-
-    pricing: {
-
-      missingMaterialPrice:
-        missingPrice,
-
-      verifiedStackSizesOnly:
-        true,
-
-      rule:
-        "Materials use the cheapest verified price per unit between Single and Stack. Non-stackable outputs such as weapons, armor and Ice Staff use Single only. Unknown stack sizes never use guessed Stack pricing."
+    if (result) {
+      results.push(
+        result
+      );
     }
+  }
+
+  return results;
+}
+
+
+/* =========================================================
+   TOP 20 SCAN
+
+   Each call checks at most 20 uncached craft candidates.
+========================================================= */
+
+async function runTop20Scan() {
+
+  const market =
+    await getMarket();
+
+  const marketItems =
+    getMarketItems(
+      market
+    );
+
+  const candidates =
+    buildCandidates(
+      marketItems
+    );
+
+
+  /*
+    First collect already cached craft items.
+  */
+
+  const opportunities =
+    [];
+
+  for (
+    const candidate
+    of candidates
+  ) {
+
+    const id =
+      Number(
+        candidate.item.itemId
+      );
+
+    if (
+      !craftCache.has(id)
+    ) {
+      continue;
+    }
+
+    const cached =
+      craftCache.get(id);
+
+    if (
+      !cached?.ok
+    ) {
+      continue;
+    }
+
+    const recipes =
+      extractRecipes(
+        cached.data
+      );
+
+    for (
+      const recipe
+      of recipes
+    ) {
+
+      const result =
+        analyzeRecipe(
+          candidate.item,
+          recipe,
+          marketItems
+        );
+
+      if (result) {
+        opportunities.push(
+          result
+        );
+      }
+    }
+  }
+
+
+  /*
+    Scan up to 20 NEW candidates.
+  */
+
+  const MAX_NEW_CALLS =
+    20;
+
+  let newCalls =
+    0;
+
+  let scannedNames =
+    [];
+
+
+  for (
+    const candidate
+    of candidates
+  ) {
+
+    if (
+      newCalls >=
+      MAX_NEW_CALLS
+    ) {
+      break;
+    }
+
+    const id =
+      Number(
+        candidate.item.itemId
+      );
+
+    if (
+      craftCache.has(id)
+    ) {
+      continue;
+    }
+
+    newCalls++;
+
+    scannedNames.push(
+      candidate.item.itemName
+    );
+
+    const results =
+      await analyzeCraftItem(
+        candidate.item,
+        marketItems
+      );
+
+    for (
+      const result
+      of results
+    ) {
+
+      opportunities.push(
+        result
+      );
+    }
+  }
+
+
+  /*
+    Deduplicate recipe results.
+  */
+
+  const dedupe =
+    new Map();
+
+  for (
+    const item
+    of opportunities
+  ) {
+
+    const key =
+      `${item.itemId}:${item.recipeId}`;
+
+    const existing =
+      dedupe.get(key);
+
+    if (
+      !existing ||
+      item.score >
+      existing.score
+    ) {
+
+      dedupe.set(
+        key,
+        item
+      );
+    }
+  }
+
+
+  const ranked =
+    Array.from(
+      dedupe.values()
+    );
+
+
+  ranked.sort(
+    (a, b) => {
+
+      if (
+        b.score !== a.score
+      ) {
+        return (
+          b.score -
+          a.score
+        );
+      }
+
+      return (
+        b.profit -
+        a.profit
+      );
+    }
+  );
+
+
+  const top20 =
+    ranked.slice(
+      0,
+      20
+    );
+
+
+  return {
+
+    generatedAt:
+      new Date().toISOString(),
+
+    marketItemCount:
+      marketItems.length,
+
+    candidateCount:
+      candidates.length,
+
+    craftCacheCount:
+      craftCache.size,
+
+    newCraftRequestsThisScan:
+      newCalls,
+
+    scannedThisRun:
+      scannedNames,
+
+    validOpportunities:
+      ranked.length,
+
+    top20,
+
+    note:
+      "Each scan checks up to 20 new liquid market candidates to stay safely below PSXI API limits. Run again later to expand the craft cache and improve Top 20 coverage. Unknown material stack sizes use conservative Single pricing."
   };
 }
 
@@ -1171,84 +1501,16 @@ app.get(
         !!PSXI_TOKEN,
 
       marketCached:
-        !!marketCache
+        !!marketCache,
+
+      craftCacheCount:
+        craftCache.size
     });
   }
 );
 
 
-app.get(
-  "/api/item",
-  async (req, res) => {
-
-    try {
-
-      const market =
-        await getMarket();
-
-      const items =
-        getMarketItems(
-          market
-        );
-
-      const item =
-        findItem(
-          items,
-          req.query.search
-        );
-
-      if (!item) {
-
-        return res
-          .status(404)
-          .json({
-            error:
-              "Item not found"
-          });
-      }
-
-      res.json({
-
-        itemId:
-          item.itemId,
-
-        itemName:
-          item.itemName,
-
-        stackable:
-          isStackable(item),
-
-        stackSize:
-          getKnownStackSize(
-            item
-          ),
-
-        materialPricing:
-          getBestMaterialPrice(
-            item
-          ),
-
-        liquidity:
-          getLiquidityInfo(
-            item
-          ),
-
-        market:
-          item
-      });
-
-    } catch (e) {
-
-      res
-        .status(500)
-        .json({
-          error:
-            e.message
-        });
-    }
-  }
-);
-
+/* Single item profit test */
 
 app.get(
   "/api/profit",
@@ -1272,10 +1534,102 @@ app.get(
           });
       }
 
-      const result =
-        await calculateProfit(
+      const market =
+        await getMarket();
+
+      const items =
+        getMarketItems(
+          market
+        );
+
+      const item =
+        findItem(
+          items,
           search
         );
+
+      if (!item) {
+
+        return res
+          .status(404)
+          .json({
+            error:
+              "Item not found"
+          });
+      }
+
+      const craftResult =
+        await getCraftData(
+          item.itemId
+        );
+
+      if (
+        !craftResult.ok
+      ) {
+
+        return res
+          .status(404)
+          .json({
+            error:
+              "No craft data",
+            details:
+              craftResult.error
+          });
+      }
+
+      const recipes =
+        extractRecipes(
+          craftResult.data
+        );
+
+      const analyzed =
+        recipes.map(
+          recipe =>
+            analyzeRecipe(
+              item,
+              recipe,
+              items
+            )
+        );
+
+      res.json({
+
+        itemName:
+          item.itemName,
+
+        market:
+          item,
+
+        recipes:
+          recipes,
+
+        profitableOpportunities:
+          analyzed.filter(Boolean)
+      });
+
+    } catch (e) {
+
+      res
+        .status(500)
+        .json({
+          error:
+            e.message
+        });
+    }
+  }
+);
+
+
+/* TOP 20 */
+
+app.get(
+  "/api/top20",
+  async (req, res) => {
+
+    try {
+
+      const result =
+        await runTop20Scan();
 
       res.json(result);
 
@@ -1292,58 +1646,19 @@ app.get(
 );
 
 
+/* Clear only in-memory Craft cache */
+
 app.get(
-  "/api/item-with-craft",
-  async (req, res) => {
+  "/api/reset-scan",
+  (req, res) => {
 
-    try {
+    craftCache.clear();
 
-      const market =
-        await getMarket();
-
-      const items =
-        getMarketItems(
-          market
-        );
-
-      const item =
-        findItem(
-          items,
-          req.query.search
-        );
-
-      if (!item) {
-
-        return res
-          .status(404)
-          .json({
-            error:
-              "Item not found"
-          });
-      }
-
-      const craft =
-        await psxiFetch(
-          CRAFT_ITEM_URL(
-            item.itemId
-          )
-        );
-
-      res.json({
-        market:
-          item,
-        craft
-      });
-
-    } catch (e) {
-
-      res
-        .status(500)
-        .json({
-          error:
-            e.message
-        });
-    }
+    res.json({
+      ok: true,
+      message:
+        "Craft scan cache cleared"
+    });
   }
 );
 
