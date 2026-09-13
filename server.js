@@ -12,7 +12,6 @@ const CRAFT_ITEM_URL = (itemId) =>
 
 let marketCache = null;
 let marketCacheTime = 0;
-
 const MARKET_CACHE_MS = 5 * 60 * 1000;
 
 function headers() {
@@ -28,10 +27,7 @@ async function psxiFetch(url) {
     throw new Error("PSXI_TOKEN is not configured");
   }
 
-  const r = await fetch(url, {
-    headers: headers()
-  });
-
+  const r = await fetch(url, { headers: headers() });
   const text = await r.text();
 
   if (!r.ok) {
@@ -44,10 +40,7 @@ async function psxiFetch(url) {
 async function getMarket() {
   const now = Date.now();
 
-  if (
-    marketCache &&
-    now - marketCacheTime < MARKET_CACHE_MS
-  ) {
+  if (marketCache && now - marketCacheTime < MARKET_CACHE_MS) {
     return marketCache;
   }
 
@@ -64,28 +57,20 @@ function getMarketItems(market) {
   return [];
 }
 
-function findItem(items, query) {
-  const q = String(query || "").trim().toLowerCase();
+function normalizeName(s) {
+  return String(s || "").trim().toLowerCase();
+}
 
-  if (!q) return null;
+function findItem(items, query) {
+  const q = normalizeName(query);
 
   return (
-    items.find(
-      (x) =>
-        String(x.itemName || "")
-          .trim()
-          .toLowerCase() === q
-    ) ||
-    items.find((x) =>
-      String(x.itemName || "")
-        .trim()
-        .toLowerCase()
-        .includes(q)
-    )
+    items.find(x => normalizeName(x.itemName) === q) ||
+    items.find(x => normalizeName(x.itemName).includes(q))
   );
 }
 
-function priceInfo(item) {
+function marketInfo(item) {
   const ah = item?.ah || {};
   const single = ah.single || {};
   const stack = ah.stack || {};
@@ -95,30 +80,169 @@ function priceInfo(item) {
     itemName: item.itemName,
     categorySlug: item.categorySlug,
     asOf: item.asOf,
-
-    single: {
-      lastSale: single.lastSale ?? null,
-      lastSaleDate: single.lastSaleDate ?? null,
-      avg: single.avg ?? null,
-      median: single.median ?? null,
-      volume: single.volume ?? 0,
-      min: single.min ?? null,
-      max: single.max ?? null,
-      stock: ah.currentStock ?? 0
-    },
-
-    stack: {
-      lastSale: stack.lastSale ?? null,
-      lastSaleDate: stack.lastSaleDate ?? null,
-      avg: stack.avg ?? null,
-      median: stack.median ?? null,
-      volume: stack.volume ?? 0,
-      min: stack.min ?? null,
-      max: stack.max ?? null,
-      stock: ah.currentStackStock ?? 0
-    },
-
+    currentStock: ah.currentStock ?? 0,
+    currentStackStock: ah.currentStackStock ?? 0,
+    single,
+    stack,
     bazaar: item.bazaar ?? null
+  };
+}
+
+function chooseUnitPrice(item) {
+  if (!item) {
+    return {
+      unitPrice: null,
+      source: "missing",
+      detail: null
+    };
+  }
+
+  const ah = item.ah || {};
+  const single = ah.single || {};
+  const stack = ah.stack || {};
+
+  const singlePrice =
+    single.lastSale ??
+    single.median ??
+    single.avg ??
+    null;
+
+  // مبدئيًا ما نحول stack إلى unit لأن stack size مو موجود في market payload.
+  // لذلك نستخدم سعر single للمواد في أول اختبار.
+  if (singlePrice != null) {
+    return {
+      unitPrice: Number(singlePrice),
+      source: "single",
+      detail: single
+    };
+  }
+
+  return {
+    unitPrice: null,
+    source: "unpriced",
+    detail: null
+  };
+}
+
+async function calculateProfitByItemName(search) {
+  const market = await getMarket();
+  const items = getMarketItems(market);
+
+  const outputItem = findItem(items, search);
+
+  if (!outputItem) {
+    throw new Error("Output item not found");
+  }
+
+  const craftData = await psxiFetch(CRAFT_ITEM_URL(outputItem.itemId));
+
+  const recipes = craftData?.recipes || [];
+
+  if (!recipes.length) {
+    throw new Error("No craft recipes found");
+  }
+
+  const recipe = recipes[0];
+
+  const outputQty = Number(recipe?.result?.qty || 1);
+
+  const outputPriceInfo = chooseUnitPrice(outputItem);
+  const outputUnitPrice = outputPriceInfo.unitPrice;
+
+  if (outputUnitPrice == null) {
+    throw new Error("Output item has no usable single price");
+  }
+
+  const crystalName = recipe?.crystal?.name || null;
+  const crystalItem = crystalName ? findItem(items, crystalName) : null;
+  const crystalPriceInfo = chooseUnitPrice(crystalItem);
+
+  let materialCost = 0;
+  const materials = [];
+
+  if (crystalName) {
+    materials.push({
+      type: "crystal",
+      itemName: crystalName,
+      qty: 1,
+      unitPrice: crystalPriceInfo.unitPrice,
+      source: crystalPriceInfo.source,
+      total:
+        crystalPriceInfo.unitPrice != null
+          ? crystalPriceInfo.unitPrice
+          : null
+    });
+
+    if (crystalPriceInfo.unitPrice != null) {
+      materialCost += crystalPriceInfo.unitPrice;
+    }
+  }
+
+  for (const ing of recipe.ingredients || []) {
+    const item = findItem(items, ing.name);
+    const priceInfo = chooseUnitPrice(item);
+
+    const qty = Number(ing.qty || 1);
+    const total =
+      priceInfo.unitPrice != null
+        ? priceInfo.unitPrice * qty
+        : null;
+
+    materials.push({
+      type: "ingredient",
+      itemId: ing.id,
+      itemName: ing.name,
+      qty,
+      unitPrice: priceInfo.unitPrice,
+      source: priceInfo.source,
+      total
+    });
+
+    if (total != null) {
+      materialCost += total;
+    }
+  }
+
+  const saleRevenue = outputUnitPrice * outputQty;
+  const grossProfit = saleRevenue - materialCost;
+  const marginPct =
+    materialCost > 0
+      ? (grossProfit / materialCost) * 100
+      : null;
+
+  return {
+    output: {
+      itemId: outputItem.itemId,
+      itemName: outputItem.itemName,
+      qty: outputQty,
+      unitPrice: outputUnitPrice,
+      revenue: saleRevenue,
+      volume7d: outputItem?.ah?.single?.volume ?? 0,
+      stock: outputItem?.ah?.currentStock ?? 0
+    },
+
+    recipe: {
+      recipeId: recipe.id,
+      crystal: recipe.crystal,
+      skills: recipe.skills,
+      ingredients: recipe.ingredients,
+      tiers: recipe.tiers
+    },
+
+    materials,
+
+    totals: {
+      materialCost,
+      saleRevenue,
+      grossProfit,
+      marginPct:
+        marginPct != null
+          ? Number(marginPct.toFixed(2))
+          : null
+    },
+
+    note:
+      "First profit-engine test uses SINGLE market prices only. Stack-size optimization will be added next."
   };
 }
 
@@ -127,17 +251,6 @@ app.get("/api/health", (req, res) => {
     ok: true,
     tokenConfigured: !!PSXI_TOKEN
   });
-});
-
-app.get("/api/market", async (req, res) => {
-  try {
-    const market = await getMarket();
-    res.json(market);
-  } catch (e) {
-    res.status(500).json({
-      error: e.message
-    });
-  }
 });
 
 app.get("/api/item", async (req, res) => {
@@ -149,59 +262,11 @@ app.get("/api/item", async (req, res) => {
 
     if (!item) {
       return res.status(404).json({
-        error: "Item not found",
-        itemCount: items.length
-      });
-    }
-
-    res.json(priceInfo(item));
-  } catch (e) {
-    res.status(500).json({
-      error: e.message
-    });
-  }
-});
-
-app.get("/api/item/:id", async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-
-    const market = await getMarket();
-    const items = getMarketItems(market);
-
-    const item = items.find(
-      (x) => Number(x.itemId) === id
-    );
-
-    if (!item) {
-      return res.status(404).json({
         error: "Item not found"
       });
     }
 
-    res.json(priceInfo(item));
-  } catch (e) {
-    res.status(500).json({
-      error: e.message
-    });
-  }
-});
-
-app.get("/api/craft/:itemId", async (req, res) => {
-  try {
-    const itemId = Number(req.params.itemId);
-
-    if (!Number.isFinite(itemId)) {
-      return res.status(400).json({
-        error: "Invalid itemId"
-      });
-    }
-
-    const craft = await psxiFetch(
-      CRAFT_ITEM_URL(itemId)
-    );
-
-    res.json(craft);
+    res.json(marketInfo(item));
   } catch (e) {
     res.status(500).json({
       error: e.message
@@ -222,21 +287,11 @@ app.get("/api/item-with-craft", async (req, res) => {
       });
     }
 
-    let craft = null;
-    let craftError = null;
-
-    try {
-      craft = await psxiFetch(
-        CRAFT_ITEM_URL(item.itemId)
-      );
-    } catch (e) {
-      craftError = e.message;
-    }
+    const craft = await psxiFetch(CRAFT_ITEM_URL(item.itemId));
 
     res.json({
-      market: priceInfo(item),
-      craft,
-      craftError
+      market: marketInfo(item),
+      craft
     });
   } catch (e) {
     res.status(500).json({
@@ -245,8 +300,26 @@ app.get("/api/item-with-craft", async (req, res) => {
   }
 });
 
+app.get("/api/profit", async (req, res) => {
+  try {
+    const search = String(req.query.search || "").trim();
+
+    if (!search) {
+      return res.status(400).json({
+        error: "search required"
+      });
+    }
+
+    const result = await calculateProfitByItemName(search);
+    res.json(result);
+
+  } catch (e) {
+    res.status(500).json({
+      error: e.message
+    });
+  }
+});
+
 app.listen(PORT, () => {
-  console.log(
-    `HorizonXI Profit Scanner running on port ${PORT}`
-  );
+  console.log(`HorizonXI Profit Scanner running on port ${PORT}`);
 });
