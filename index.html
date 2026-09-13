@@ -1,20 +1,170 @@
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>HorizonXI Profit Scanner</title><style>
-body{margin:0;background:#090e16;color:#eef5ff;font:14px Arial}header,main{max-width:1100px;margin:auto;padding:18px}header{border-bottom:1px solid #26364b}h1{margin:0}.muted{color:#8fa4be}
-.panel{background:#111a27;border:1px solid #29394e;border-radius:12px;padding:14px;margin-top:14px}.bar{display:flex;gap:8px;flex-wrap:wrap}
-input,button{padding:12px;border-radius:8px;border:1px solid #344a65;background:#172435;color:white}button{background:#1769b6;font-weight:bold}
-.result{margin-top:15px;display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.k{background:#162231;padding:13px;border-radius:9px}.v{font-size:20px;font-weight:bold;margin-top:5px}
-a{color:#8cc6ff}@media(max-width:650px){.result{grid-template-columns:1fr 1fr}}
-</style></head><body><header><h1>HorizonXI Profit Scanner</h1><div class=muted>Server-backed build — PSXI data is fetched by the backend, not by local-file JavaScript.</div></header>
-<main><div class=panel><h2>Live item test</h2><p>First prove the data path works. Default test: Fire Crystal.</p>
-<div class=bar><input id=cat value="crystals" placeholder="PSXI category"><input id=slug value="fire-crystal" placeholder="item slug"><button id=go>Get Live Price</button></div>
-<div id=msg class=muted style="margin-top:12px">Ready.</div><div id=out></div></div>
-<div class=panel><h2>Next scanner layer</h2><p class=muted>This project has the correct architecture for hosting: browser → your Node backend → PSXI → calculations. The Top-20 recipe engine can be added after the live item endpoint is verified on the host.</p></div></main>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>HorizonXI Profit Scanner</title>
+  <style>
+    body{
+      margin:0;
+      background:#08111b;
+      color:#eef5ff;
+      font-family:Arial,sans-serif;
+    }
+    main{
+      max-width:900px;
+      margin:auto;
+      padding:24px;
+    }
+    .card{
+      background:#111b28;
+      border:1px solid #29394e;
+      border-radius:14px;
+      padding:18px;
+      margin-top:20px;
+    }
+    input,button{
+      padding:12px 14px;
+      border-radius:9px;
+      border:1px solid #344a65;
+      background:#172435;
+      color:white;
+      font-size:16px;
+    }
+    button{
+      background:#1769b6;
+      font-weight:bold;
+      cursor:pointer;
+    }
+    .row{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+    }
+    .result{
+      display:grid;
+      grid-template-columns:repeat(4,1fr);
+      gap:10px;
+      margin-top:18px;
+    }
+    .box{
+      background:#162231;
+      padding:14px;
+      border-radius:10px;
+    }
+    .label{
+      color:#8fa4be;
+      font-size:13px;
+    }
+    .value{
+      font-size:22px;
+      font-weight:bold;
+      margin-top:5px;
+    }
+    .error{color:#ff7474;margin-top:12px}
+    .ok{color:#5fe090;margin-top:12px}
+    @media(max-width:700px){
+      .result{grid-template-columns:1fr 1fr}
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>HorizonXI Profit Scanner</h1>
+  <p>Live HorizonXI market data via PSXI API</p>
+
+  <div class="card">
+    <h2>Live Item Search</h2>
+
+    <div class="row">
+      <input id="search" value="Fire Crystal" placeholder="Item name">
+      <button onclick="getItem()">Get Live Price</button>
+    </div>
+
+    <div id="status"></div>
+    <div id="result"></div>
+  </div>
+</main>
+
 <script>
-const $=x=>document.getElementById(x),fmt=x=>x==null?"—":x.toLocaleString()+" gil";
-$("go").onclick=async()=>{ $("msg").textContent="Fetching PSXI…";$("out").innerHTML="";
-try{let r=await fetch(`/api/item?cat=${encodeURIComponent($("cat").value)}&slug=${encodeURIComponent($("slug").value)}`),d=await r.json();if(!r.ok)throw Error(d.error||"Request failed");
-$("msg").textContent="Live response received.";
-$("out").innerHTML=`<h3>${d.title||"Item"}</h3><div class=result><div class=k><div class=muted>Single</div><div class=v>${fmt(d.singlePrice)}</div></div><div class=k><div class=muted>Single stock</div><div class=v>${d.singleStock??"—"}</div></div><div class=k><div class=muted>Stack</div><div class=v>${fmt(d.stackPrice)}</div></div><div class=k><div class=muted>Stack stock</div><div class=v>${d.stackStock??"—"}</div></div></div><p><a href="${d.source}" target=_blank>Open source on PSXI</a></p>`;
-}catch(e){$("msg").textContent="Error: "+e.message}}
-</script></body></html>
+async function getItem() {
+  const search = document.getElementById("search").value.trim();
+  const status = document.getElementById("status");
+  const result = document.getElementById("result");
+
+  status.className = "";
+  status.textContent = "Loading...";
+  result.innerHTML = "";
+
+  try {
+    const r = await fetch("/api/item?search=" + encodeURIComponent(search));
+    const d = await r.json();
+
+    if (!r.ok) {
+      throw new Error(d.error || "Request failed");
+    }
+
+    const singlePrice =
+      d.singlePrice ??
+      d.price ??
+      d.single ??
+      d.currentPrice ??
+      null;
+
+    const stackPrice =
+      d.stackPrice ??
+      d.stack ??
+      null;
+
+    const singleStock =
+      d.singleStock ??
+      d.stock ??
+      null;
+
+    const stackStock =
+      d.stackStock ??
+      null;
+
+    const name =
+      d.itemName ??
+      d.name ??
+      search;
+
+    status.className = "ok";
+    status.textContent = "Live data received";
+
+    result.innerHTML = `
+      <h3>${name}</h3>
+      <div class="result">
+        <div class="box">
+          <div class="label">Single Price</div>
+          <div class="value">${singlePrice ?? "—"}</div>
+        </div>
+
+        <div class="box">
+          <div class="label">Stack Price</div>
+          <div class="value">${stackPrice ?? "—"}</div>
+        </div>
+
+        <div class="box">
+          <div class="label">Single Stock</div>
+          <div class="value">${singleStock ?? "—"}</div>
+        </div>
+
+        <div class="box">
+          <div class="label">Stack Stock</div>
+          <div class="value">${stackStock ?? "—"}</div>
+        </div>
+      </div>
+
+      <pre style="white-space:pre-wrap;margin-top:20px;color:#9fb2c9">${JSON.stringify(d,null,2)}</pre>
+    `;
+
+  } catch (e) {
+    status.className = "error";
+    status.textContent = "Error: " + e.message;
+  }
+}
+</script>
+</body>
+</html>
