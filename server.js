@@ -14,7 +14,7 @@ const CRAFT_ITEM_URL = (itemId) =>
 
 
 /* =========================================================
-   CACHE / SCAN CONTROL
+   CACHE
 ========================================================= */
 
 let marketCache = null;
@@ -29,35 +29,42 @@ const craftCache =
 let top20Cache = null;
 let top20CacheTime = 0;
 
-/*
-  Prevent accidental repeated API scans.
-*/
 const TOP20_SCAN_COOLDOWN_MS =
   2 * 60 * 1000;
 
 
 /* =========================================================
+   CATEGORY RULES
+
+   automation is excluded because its recipe quantities /
+   market behavior should not be treated like normal crafts.
+========================================================= */
+
+const EXCLUDED_CATEGORIES =
+  new Set([
+    "automation"
+  ]);
+
+
+/* =========================================================
    VERIFIED STACK SIZES
 
-   Only verified sizes are used.
-   Unknown sizes fall back to Single prices.
+   Unknown stack sizes use Single price only.
 ========================================================= */
 
 const STACK_SIZE_BY_ID = {
 
-  /* Crystals */
-  4096: 12,
-  4097: 12,
-  4098: 12,
-  4099: 12,
-  4100: 12,
-  4101: 12,
-  4102: 12,
-  4103: 12,
+  4096: 12, // Fire Crystal
+  4097: 12, // Ice Crystal
+  4098: 12, // Wind Crystal
+  4099: 12, // Earth Crystal
+  4100: 12, // Lightning Crystal
+  4101: 12, // Water Crystal
+  4102: 12, // Light Crystal
+  4103: 12, // Dark Crystal
 
-  /* Verified test materials */
-  719: 12,   // Ebony Lumber
-  1300: 12   // Ice Bead
+  719: 12,  // Ebony Lumber
+  1300: 12  // Ice Bead
 };
 
 
@@ -73,7 +80,7 @@ function headers() {
       "application/json",
 
     "user-agent":
-      "HorizonXI-Profit-Scanner/2.0",
+      "HorizonXI-Profit-Scanner/2.1",
 
     Authorization:
       `Bearer ${PSXI_TOKEN}`
@@ -177,7 +184,7 @@ function getMarketItems(market) {
 
 
 /* =========================================================
-   SEARCH HELPERS
+   SEARCH
 ========================================================= */
 
 function normalizeName(value) {
@@ -196,9 +203,7 @@ function findItem(
 ) {
 
   const q =
-    normalizeName(
-      search
-    );
+    normalizeName(search);
 
   if (!q) {
     return null;
@@ -241,7 +246,7 @@ function findItemById(
 
 
 /* =========================================================
-   MARKET PRICES
+   PRICES
 ========================================================= */
 
 function getSinglePrice(item) {
@@ -282,9 +287,7 @@ function getStackPrice(item) {
 }
 
 
-function getKnownStackSize(
-  item
-) {
+function getKnownStackSize(item) {
 
   if (!item) {
     return null;
@@ -300,36 +303,8 @@ function getKnownStackSize(
 }
 
 
-function hasStackData(item) {
-
-  const stack =
-    item?.ah?.stack || {};
-
-  return (
-
-    stack.lastSale != null ||
-
-    stack.median != null ||
-
-    stack.avg != null ||
-
-    Number(
-      stack.volume || 0
-    ) > 0 ||
-
-    Number(
-      item?.ah
-        ?.currentStackStock || 0
-    ) > 0
-  );
-}
-
-
 /* =========================================================
-   MATERIAL BUYING
-
-   Cheapest verified unit price:
-   Single vs Stack/unit.
+   MATERIAL PRICE OPTIMIZER
 ========================================================= */
 
 function getBestMaterialPrice(
@@ -362,6 +337,7 @@ function getBestMaterialPrice(
   let stackUnitPrice =
     null;
 
+
   if (
     stackSize &&
     stackPrice != null
@@ -371,6 +347,7 @@ function getBestMaterialPrice(
       stackPrice /
       stackSize;
   }
+
 
   let selectedUnitPrice =
     null;
@@ -541,13 +518,6 @@ function getLiquidityInfo(
   }
 
 
-  /*
-    Important:
-    If one synth produces 12 items,
-    how long would OUR 12 units take
-    to sell at the current rate?
-  */
-
   let daysToSellCraftBatch =
     null;
 
@@ -560,10 +530,6 @@ function getLiquidityInfo(
       salesPerDay;
   }
 
-
-  /*
-    Existing stock + our crafted batch.
-  */
 
   let daysToClearAfterCraft =
     null;
@@ -616,15 +582,6 @@ function getLiquidityInfo(
       daysToClearMarket > 14
     );
 
-
-  /*
-    Stronger Top-20 requirement.
-
-    At least 14 sales / 7 days
-    Current market <= 14 days
-    Our own synth batch <= 7 days
-    Market after adding our batch <= 14 days
-  */
 
   const top20Eligible =
 
@@ -696,8 +653,6 @@ function getLiquidityInfo(
 
 /* =========================================================
    CANDIDATE FILTER
-
-   Do this BEFORE Craft API calls.
 ========================================================= */
 
 function buildCandidates(
@@ -713,10 +668,26 @@ function buildCandidates(
     of items
   ) {
 
+    /*
+      Remove automation completely.
+    */
+
+    if (
+      EXCLUDED_CATEGORIES.has(
+        String(
+          item.categorySlug || ""
+        ).toLowerCase()
+      )
+    ) {
+      continue;
+    }
+
+
     const price =
       getSinglePrice(
         item
       );
+
 
     if (
       price == null ||
@@ -734,10 +705,6 @@ function buildCandidates(
       );
 
 
-    /*
-      Must actually move.
-    */
-
     if (
       volume7d < 14
     ) {
@@ -745,7 +712,7 @@ function buildCandidates(
     }
 
 
-    const baseLiquidity =
+    const liquidity =
       getLiquidityInfo(
         item,
         1
@@ -753,31 +720,23 @@ function buildCandidates(
 
 
     if (
-      baseLiquidity.saturated
+      liquidity.saturated
     ) {
       continue;
     }
 
 
     if (
-      baseLiquidity
-        .lastSaleAgeDays != null &&
-      baseLiquidity
-        .lastSaleAgeDays > 7
+      liquidity.lastSaleAgeDays != null &&
+      liquidity.lastSaleAgeDays > 7
     ) {
       continue;
     }
 
 
-    /*
-      Pre-craft economic importance.
-
-      Price x actual sales rate.
-    */
-
     const marketPotential =
       price *
-      baseLiquidity.salesPerDay;
+      liquidity.salesPerDay;
 
 
     candidates.push({
@@ -787,8 +746,7 @@ function buildCandidates(
       salePrice:
         price,
 
-      liquidity:
-        baseLiquidity,
+      liquidity,
 
       marketPotential
     });
@@ -873,7 +831,7 @@ async function getCraftData(
 
 
 /* =========================================================
-   CRAFT PARSER
+   RECIPE PARSER
 ========================================================= */
 
 function extractRecipes(
@@ -951,8 +909,6 @@ function calculateMaterials(
   let missingPrice =
     false;
 
-
-  /* Crystal */
 
   if (
     recipe?.crystal?.name
@@ -1036,8 +992,6 @@ function calculateMaterials(
     });
   }
 
-
-  /* Ingredients */
 
   for (
     const ingredient
@@ -1148,14 +1102,7 @@ function calculateMaterials(
 
 
 /* =========================================================
-   ANALYZE ONE RECIPE
-
-   IMPORTANT HQ SAFETY RULE:
-
-   recipe.result.id MUST match the output item.
-
-   If PSXI returned a base recipe because the searched item
-   is an HQ result, we DO NOT pretend HQ is guaranteed.
+   ANALYZE RECIPE
 ========================================================= */
 
 function analyzeRecipe(
@@ -1163,6 +1110,30 @@ function analyzeRecipe(
   recipeEntry,
   marketItems
 ) {
+
+  /*
+    Safety:
+    exclude automation here too,
+    even if somehow it reached this point.
+  */
+
+  if (
+    EXCLUDED_CATEGORIES.has(
+      String(
+        outputItem.categorySlug || ""
+      ).toLowerCase()
+    )
+  ) {
+
+    return {
+
+      excluded: true,
+
+      exclusionReason:
+        "excluded-category"
+    };
+  }
+
 
   const recipe =
     recipeEntry.recipe;
@@ -1181,11 +1152,8 @@ function analyzeRecipe(
 
 
   /*
-    Example:
-    Fire Staff recipe -> Vulcan's Staff HQ.
-
-    Until HQ result mapping is handled probabilistically,
-    exclude it from guaranteed-profit Top 20.
+    HQ result safety:
+    don't treat HQ output as guaranteed.
   */
 
   if (
@@ -1198,22 +1166,7 @@ function analyzeRecipe(
       excluded: true,
 
       exclusionReason:
-        "indirect-hq-result",
-
-      itemId:
-        outputItem.itemId,
-
-      itemName:
-        outputItem.itemName,
-
-      recipeId:
-        recipe.id,
-
-      baseResult:
-        recipe.result,
-
-      tiers:
-        recipeEntry.tiers
+        "indirect-hq-result"
     };
   }
 
@@ -1244,13 +1197,6 @@ function analyzeRecipe(
     );
 
 
-  /*
-    If synth produces 12 units,
-    12 * single sale price is valid revenue,
-    but liquidity must prove those 12 units
-    can realistically move.
-  */
-
   const saleRevenue =
     salePrice *
     outputQty;
@@ -1273,13 +1219,7 @@ function analyzeRecipe(
       excluded: true,
 
       exclusionReason:
-        "missing-material-price",
-
-      itemId:
-        outputItem.itemId,
-
-      itemName:
-        outputItem.itemName
+        "missing-material-price"
     };
   }
 
@@ -1302,16 +1242,7 @@ function analyzeRecipe(
       excluded: true,
 
       exclusionReason:
-        "not-profitable",
-
-      itemId:
-        outputItem.itemId,
-
-      itemName:
-        outputItem.itemName,
-
-      profit:
-        grossProfit
+        "not-profitable"
     };
   }
 
@@ -1344,30 +1275,10 @@ function analyzeRecipe(
       excluded: true,
 
       exclusionReason:
-        "too-slow-or-saturated",
-
-      itemId:
-        outputItem.itemId,
-
-      itemName:
-        outputItem.itemName,
-
-      outputQty,
-
-      profit:
-        grossProfit,
-
-      liquidity
+        "too-slow-or-saturated"
     };
   }
 
-
-  /*
-    Profit per expected selling day.
-
-    Helps stop a huge-profit but slow craft
-    from dominating the list.
-  */
 
   const batchDays =
     Math.max(
@@ -1385,16 +1296,6 @@ function analyzeRecipe(
       ).toFixed(2)
     );
 
-
-  /*
-    SCORE
-
-    35% absolute profit
-    25% selling speed
-    15% margin
-    15% profit/day
-    10% low market saturation
-  */
 
   const profitScore =
     Math.min(
@@ -1555,12 +1456,6 @@ async function runTop20Scan() {
     Date.now();
 
 
-  /*
-    Refreshing the page within 2 minutes
-    returns the same result and spends ZERO
-    new Craft API requests.
-  */
-
   if (
     top20Cache &&
     now - top20CacheTime <
@@ -1608,7 +1503,11 @@ async function runTop20Scan() {
   const valid =
     [];
 
+
   const excludedStats = {
+
+    excludedCategory:
+      0,
 
     indirectHQ:
       0,
@@ -1652,39 +1551,56 @@ async function runTop20Scan() {
       analysis.exclusionReason
     ) {
 
+      case "excluded-category":
+
+        excludedStats
+          .excludedCategory++;
+
+        break;
+
+
       case "indirect-hq-result":
 
-        excludedStats.indirectHQ++;
+        excludedStats
+          .indirectHQ++;
+
         break;
 
 
       case "not-profitable":
 
-        excludedStats.unprofitable++;
+        excludedStats
+          .unprofitable++;
+
         break;
 
 
       case "too-slow-or-saturated":
 
-        excludedStats.slowOrSaturated++;
+        excludedStats
+          .slowOrSaturated++;
+
         break;
 
 
       case "missing-material-price":
 
-        excludedStats.missingMaterialPrice++;
+        excludedStats
+          .missingMaterialPrice++;
+
         break;
 
 
       default:
 
-        excludedStats.other++;
+        excludedStats
+          .other++;
     }
   }
 
 
   /*
-    Recalculate everything already cached.
+    Reuse everything already cached.
   */
 
   for (
@@ -1732,10 +1648,7 @@ async function runTop20Scan() {
 
 
   /*
-    Conservative API usage.
-
-    Only 10 NEW craft calls per expansion.
-    Much safer than 20 when manually refreshing.
+    10 new craft API calls per expansion.
   */
 
   const MAX_NEW_CALLS =
@@ -1785,7 +1698,9 @@ async function runTop20Scan() {
 
 
     const craftResult =
-      await getCraftData(id);
+      await getCraftData(
+        id
+      );
 
 
     if (
@@ -1816,10 +1731,6 @@ async function runTop20Scan() {
     }
   }
 
-
-  /*
-    Dedupe recipe IDs.
-  */
 
   const dedupe =
     new Map();
@@ -1862,7 +1773,8 @@ async function runTop20Scan() {
     (a, b) => {
 
       if (
-        b.score !== a.score
+        b.score !==
+        a.score
       ) {
 
         return (
@@ -1924,6 +1836,11 @@ async function runTop20Scan() {
 
     excludedStats,
 
+    excludedCategories:
+      Array.from(
+        EXCLUDED_CATEGORIES
+      ),
+
     rules: {
 
       minimumSingleSales7d:
@@ -1945,6 +1862,9 @@ async function runTop20Scan() {
         true,
 
       indirectHQExcluded:
+        true,
+
+      automationExcluded:
         true,
 
       unknownStackSizeUsesSingle:
@@ -2025,10 +1945,6 @@ app.get(
 );
 
 
-/*
-  Detailed raw craft + market check.
-*/
-
 app.get(
   "/api/debug-item",
   async (req, res) => {
@@ -2080,6 +1996,13 @@ app.get(
         market:
           item,
 
+        excludedByCategory:
+          EXCLUDED_CATEGORIES.has(
+            String(
+              item.categorySlug || ""
+            ).toLowerCase()
+          ),
+
         craft
       });
 
@@ -2102,7 +2025,7 @@ app.listen(
   () => {
 
     console.log(
-      `HorizonXI Profit Scanner v2 running on ${PORT}`
+      `HorizonXI Profit Scanner v2.1 running on ${PORT}`
     );
   }
 );
