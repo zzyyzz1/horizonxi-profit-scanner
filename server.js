@@ -1,24 +1,84 @@
 import express from "express";
-import * as cheerio from "cheerio";
-const app=express(); app.use(express.static("."));
-const BASE="https://www.psxi.gg";
-async function getPage(path){
- const r=await fetch(BASE+path,{headers:{"user-agent":"HorizonXI-Profit-Scanner/1.0"}});
- if(!r.ok) throw new Error(`PSXI ${r.status}`);
- return await r.text();
-}
-function num(s){let m=(s||"").replace(/,/g,"").match(/(\d+)/);return m?+m[1]:null}
-app.get("/api/item",async(req,res)=>{
- try{
-  let slug=String(req.query.slug||"").replace(/[^a-z0-9-]/gi,"");
-  let cat=String(req.query.cat||"").replace(/[^a-z0-9-]/gi,"");
-  if(!slug||!cat) return res.status(400).json({error:"cat and slug required"});
-  let html=await getPage(`/s/horizonxi/ah/${cat}/${slug}`),$=cheerio.load(html),text=$("body").text().replace(/\s+/g," ");
-  let title=$("h1").first().text().trim();
-  function block(label,next){let i=text.indexOf(label);if(i<0)return "";let j=next?text.indexOf(next,i+label.length):-1;return text.slice(i,j>i?j:i+350)}
-  let single=block("Single","Stack"), stack=block("Stack","Recent Auction House Sales");
-  res.json({title,singlePrice:num(single.match(/Single\s*([\d,]+)\s*gil/i)?.[1]),singleStock:num(single.match(/Stock\s*([\d,]+)/i)?.[1]),stackPrice:num(stack.match(/Stack\s*([\d,]+)\s*gil/i)?.[1]),stackStock:num(stack.match(/Stock\s*([\d,]+)/i)?.[1]),source:BASE+`/s/horizonxi/ah/${cat}/${slug}`});
- }catch(e){res.status(500).json({error:e.message})}
+
+const app = express();
+
+app.use(express.static("."));
+
+const PSXI_API = "https://www.psxi.gg/api/v1/market/horizonxi";
+
+app.get("/api/health", (req, res) => {
+  res.json({ ok: true });
 });
-app.get("/api/health",(q,r)=>r.json({ok:true}));
-const port=process.env.PORT||3000; app.listen(port,()=>console.log("HorizonXI scanner:",port));
+
+app.get("/api/market", async (req, res) => {
+  try {
+    const response = await fetch(PSXI_API, {
+      headers: {
+        "accept": "application/json",
+        "user-agent": "HorizonXI-Profit-Scanner/1.0"
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`PSXI API ${response.status}`);
+    }
+
+    const data = await response.json();
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({
+      error: error.message
+    });
+  }
+});
+
+app.get("/api/item", async (req, res) => {
+  try {
+    const search = String(req.query.search || "").trim().toLowerCase();
+
+    if (!search) {
+      return res.status(400).json({
+        error: "search required"
+      });
+    }
+
+    const response = await fetch(PSXI_API, {
+      headers: {
+        "accept": "application/json",
+        "user-agent": "HorizonXI-Profit-Scanner/1.0"
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`PSXI API ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    const items = Array.isArray(data) ? data : (data.items || []);
+
+    const item = items.find(x =>
+      String(x.itemName || x.name || "")
+        .toLowerCase()
+        .includes(search)
+    );
+
+    if (!item) {
+      return res.status(404).json({
+        error: "Item not found"
+      });
+    }
+
+    res.json(item);
+  } catch (error) {
+    res.status(500).json({
+      error: error.message
+    });
+  }
+});
+
+const port = process.env.PORT || 3000;
+
+app.listen(port, () => {
+  console.log(`HorizonXI scanner running on port ${port}`);
+});
