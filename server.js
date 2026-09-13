@@ -12,15 +12,24 @@ const MARKET_URL =
 const CRAFT_URL = (id) =>
   `https://www.psxi.gg/api/v1/craft/horizonxi/item/${id}`;
 
-const MARKET_TTL = 10 * 60 * 1000;
-const EXPAND_COOLDOWN = 2 * 60 * 1000;
-const NEW_CRAFT_CALLS_PER_EXPANSION = 10;
+const MARKET_TTL =
+  10 * 60 * 1000;
+
+const EXPAND_COOLDOWN =
+  2 * 60 * 1000;
+
+const NEW_CRAFT_CALLS_PER_EXPANSION =
+  10;
+
+const PSXI_TIMEOUT_MS =
+  8000;
 
 let marketCache = null;
 let marketAt = 0;
 let lastExpansionAt = 0;
 
-const craftCache = new Map();
+const craftCache =
+  new Map();
 
 const EXCLUDED_CATEGORIES =
   new Set([
@@ -28,11 +37,18 @@ const EXCLUDED_CATEGORIES =
     "automatom"
   ]);
 
+
+/* =========================================================
+   VERIFIED STACK SIZES
+========================================================= */
+
 const STACK_SIZE = {
+
   4096: 12,
   4097: 12,
   4098: 12,
   4099: 12,
+
   4100: 12,
   4101: 12,
   4102: 12,
@@ -48,10 +64,15 @@ const STACK_SIZE = {
 ========================================================= */
 
 function apiHeaders() {
+
   return {
-    accept: "application/json",
+
+    accept:
+      "application/json",
+
     "user-agent":
-      "HorizonXI-Profit-Scanner/3.0",
+      "HorizonXI-Profit-Scanner/3.1",
+
     Authorization:
       `Bearer ${PSXI_TOKEN}`
   };
@@ -61,26 +82,85 @@ function apiHeaders() {
 async function api(url) {
 
   if (!PSXI_TOKEN) {
+
     throw new Error(
       "PSXI_TOKEN is not configured"
     );
   }
 
-  const response =
-    await fetch(url, {
-      headers: apiHeaders()
-    });
 
-  const text =
-    await response.text();
+  const controller =
+    new AbortController();
 
-  if (!response.ok) {
-    throw new Error(
-      `PSXI ${response.status}: ${text.slice(0, 250)}`
+
+  const timeout =
+    setTimeout(
+      () =>
+        controller.abort(),
+      PSXI_TIMEOUT_MS
+    );
+
+
+  try {
+
+    const response =
+      await fetch(
+        url,
+        {
+          headers:
+            apiHeaders(),
+
+          signal:
+            controller.signal
+        }
+      );
+
+
+    const text =
+      await response.text();
+
+
+    if (!response.ok) {
+
+      const error =
+        new Error(
+          `PSXI ${response.status}: ${text.slice(0, 250)}`
+        );
+
+      error.status =
+        response.status;
+
+      throw error;
+    }
+
+
+    return JSON.parse(
+      text
+    );
+
+
+  } catch (error) {
+
+    if (
+      error.name ===
+      "AbortError"
+    ) {
+
+      throw new Error(
+        "PSXI request timed out"
+      );
+    }
+
+
+    throw error;
+
+
+  } finally {
+
+    clearTimeout(
+      timeout
     );
   }
-
-  return JSON.parse(text);
 }
 
 
@@ -92,29 +172,41 @@ async function getMarket() {
 
   if (
     marketCache &&
-    Date.now() - marketAt <
+    Date.now() -
+      marketAt <
       MARKET_TTL
   ) {
+
     return marketCache;
   }
+
 
   marketCache =
     await api(
       MARKET_URL
     );
 
+
   marketAt =
     Date.now();
+
 
   return marketCache;
 }
 
 
-function itemsOf(market) {
+function itemsOf(
+  market
+) {
 
-  if (Array.isArray(market)) {
+  if (
+    Array.isArray(
+      market
+    )
+  ) {
     return market;
   }
+
 
   if (
     Array.isArray(
@@ -124,6 +216,7 @@ function itemsOf(market) {
     return market.data;
   }
 
+
   if (
     Array.isArray(
       market?.items
@@ -131,6 +224,7 @@ function itemsOf(market) {
   ) {
     return market.items;
   }
+
 
   return [];
 }
@@ -140,7 +234,9 @@ function itemsOf(market) {
    ITEM HELPERS
 ========================================================= */
 
-function nameKey(value) {
+function nameKey(
+  value
+) {
 
   return String(
     value || ""
@@ -158,7 +254,9 @@ function byId(
   return (
     items.find(
       item =>
-        Number(item.itemId) ===
+        Number(
+          item.itemId
+        ) ===
         Number(id)
     ) || null
   );
@@ -171,22 +269,33 @@ function byName(
 ) {
 
   const query =
-    nameKey(name);
+    nameKey(
+      name
+    );
+
 
   return (
-    items.find(
-      item =>
-        nameKey(
-          item.itemName
-        ) === query
-    ) ||
 
     items.find(
       item =>
         nameKey(
           item.itemName
-        ).includes(query)
-    ) ||
+        ) ===
+        query
+    )
+
+    ||
+
+    items.find(
+      item =>
+        nameKey(
+          item.itemName
+        ).includes(
+          query
+        )
+    )
+
+    ||
 
     null
   );
@@ -218,16 +327,24 @@ function singlePrice(
   const single =
     item?.ah?.single || {};
 
+
   const value =
+
     single.lastSale ??
+
     single.median ??
+
     single.avg ??
+
     null;
+
 
   return (
     value == null
       ? null
-      : Number(value)
+      : Number(
+          value
+        )
   );
 }
 
@@ -239,16 +356,24 @@ function stackPrice(
   const stack =
     item?.ah?.stack || {};
 
+
   const value =
+
     stack.lastSale ??
+
     stack.median ??
+
     stack.avg ??
+
     null;
+
 
   return (
     value == null
       ? null
-      : Number(value)
+      : Number(
+          value
+        )
   );
 }
 
@@ -260,16 +385,23 @@ function hasStackMarket(
   const stack =
     item?.ah?.stack || {};
 
+
   return (
+
     stack.lastSale != null ||
+
     stack.median != null ||
+
     stack.avg != null ||
+
     Number(
       stack.volume || 0
     ) > 0 ||
+
     Number(
       item?.ah
-        ?.currentStackStock || 0
+        ?.currentStackStock ||
+      0
     ) > 0
   );
 }
@@ -280,11 +412,14 @@ function stackSize(
 ) {
 
   return (
+
     STACK_SIZE[
       Number(
         item?.itemId
       )
-    ] ?? null
+    ]
+
+    ?? null
   );
 }
 
@@ -298,31 +433,51 @@ function materialPrice(
 ) {
 
   if (!item) {
+
     return {
-      unit: null,
-      mode: "missing",
-      stackSize: null
+
+      unit:
+        null,
+
+      mode:
+        "missing",
+
+      stackSize:
+        null
     };
   }
 
+
   const single =
-    singlePrice(item);
+    singlePrice(
+      item
+    );
+
 
   const stack =
-    stackPrice(item);
+    stackPrice(
+      item
+    );
+
 
   const size =
-    stackSize(item);
+    stackSize(
+      item
+    );
+
 
   let stackUnit =
     null;
+
 
   if (
     size &&
     stack != null
   ) {
+
     stackUnit =
-      stack / size;
+      stack /
+      size;
   }
 
 
@@ -335,39 +490,56 @@ function materialPrice(
       stackUnit <
       single
     ) {
+
       return {
+
         unit:
           Number(
-            stackUnit.toFixed(2)
+            stackUnit
+              .toFixed(2)
           ),
+
         mode:
           "stack",
+
         singlePrice:
           single,
+
         stackPrice:
           stack,
+
         stackUnitPrice:
           Number(
-            stackUnit.toFixed(2)
+            stackUnit
+              .toFixed(2)
           ),
+
         stackSize:
           size
       };
     }
 
+
     return {
+
       unit:
         single,
+
       mode:
         "single",
+
       singlePrice:
         single,
+
       stackPrice:
         stack,
+
       stackUnitPrice:
         Number(
-          stackUnit.toFixed(2)
+          stackUnit
+            .toFixed(2)
         ),
+
       stackSize:
         size
     };
@@ -379,16 +551,22 @@ function materialPrice(
   ) {
 
     return {
+
       unit:
         single,
+
       mode:
         "single",
+
       singlePrice:
         single,
+
       stackPrice:
         stack,
+
       stackUnitPrice:
         stackUnit,
+
       stackSize:
         size
     };
@@ -400,20 +578,28 @@ function materialPrice(
   ) {
 
     return {
+
       unit:
         Number(
-          stackUnit.toFixed(2)
+          stackUnit
+            .toFixed(2)
         ),
+
       mode:
         "stack",
+
       singlePrice:
         single,
+
       stackPrice:
         stack,
+
       stackUnitPrice:
         Number(
-          stackUnit.toFixed(2)
+          stackUnit
+            .toFixed(2)
         ),
+
       stackSize:
         size
     };
@@ -421,14 +607,22 @@ function materialPrice(
 
 
   return {
-    unit: null,
-    mode: "unpriced",
+
+    unit:
+      null,
+
+    mode:
+      "unpriced",
+
     singlePrice:
       single,
+
     stackPrice:
       stack,
+
     stackUnitPrice:
       stackUnit,
+
     stackSize:
       size
   };
@@ -448,26 +642,34 @@ function lastSaleAgeDays(
       ?.single
       ?.lastSaleDate;
 
+
   if (!raw) {
     return null;
   }
 
+
   const time =
-    new Date(raw)
-      .getTime();
+    new Date(
+      raw
+    ).getTime();
+
 
   if (
-    Number.isNaN(time)
+    Number.isNaN(
+      time
+    )
   ) {
     return null;
   }
+
 
   return Number(
     (
       (
         Date.now() -
         time
-      ) /
+      )
+      /
       86400000
     ).toFixed(2)
   );
@@ -482,15 +684,19 @@ function liquidity(
   const stock =
     Number(
       item?.ah
-        ?.currentStock || 0
+        ?.currentStock ||
+      0
     );
+
 
   const volume7d =
     Number(
       item?.ah
         ?.single
-        ?.volume || 0
+        ?.volume ||
+      0
     );
+
 
   const salesPerDay =
     volume7d / 7;
@@ -505,7 +711,9 @@ function liquidity(
 
   const batchDays =
     salesPerDay > 0
-      ? Number(outputQty) /
+      ? Number(
+          outputQty
+        ) /
         salesPerDay
       : null;
 
@@ -514,8 +722,11 @@ function liquidity(
     salesPerDay > 0
       ? (
           stock +
-          Number(outputQty)
-        ) /
+          Number(
+            outputQty
+          )
+        )
+        /
         salesPerDay
       : null;
 
@@ -528,28 +739,35 @@ function liquidity(
 
     salesPerDay:
       Number(
-        salesPerDay.toFixed(2)
+        salesPerDay
+          .toFixed(2)
       ),
 
     daysToClear:
-      daysToClear == null
+      daysToClear ==
+      null
         ? null
         : Number(
-            daysToClear.toFixed(2)
+            daysToClear
+              .toFixed(2)
           ),
 
     batchDays:
-      batchDays == null
+      batchDays ==
+      null
         ? null
         : Number(
-            batchDays.toFixed(2)
+            batchDays
+              .toFixed(2)
           ),
 
     afterCraftDays:
-      afterCraftDays == null
+      afterCraftDays ==
+      null
         ? null
         : Number(
-            afterCraftDays.toFixed(2)
+            afterCraftDays
+              .toFixed(2)
           ),
 
     lastSaleAgeDays:
@@ -559,23 +777,46 @@ function liquidity(
 
     eligible:
 
-      volume7d >= 14 &&
+      volume7d >= 14
 
-      salesPerDay > 0 &&
+      &&
 
-      (
-        daysToClear == null ||
-        daysToClear <= 14
-      ) &&
+      salesPerDay > 0
 
-      (
-        batchDays == null ||
-        batchDays <= 7
-      ) &&
+      &&
 
       (
-        afterCraftDays == null ||
-        afterCraftDays <= 14
+        daysToClear ==
+        null
+
+        ||
+
+        daysToClear <=
+        14
+      )
+
+      &&
+
+      (
+        batchDays ==
+        null
+
+        ||
+
+        batchDays <=
+        7
+      )
+
+      &&
+
+      (
+        afterCraftDays ==
+        null
+
+        ||
+
+        afterCraftDays <=
+        14
       )
   };
 }
@@ -602,13 +843,17 @@ function candidates(
       item => {
 
         const price =
-          singlePrice(item);
+          singlePrice(
+            item
+          );
+
 
         const liq =
           liquidity(
             item,
             1
           );
+
 
         return {
 
@@ -630,20 +875,41 @@ function candidates(
     .filter(
       x =>
 
-        x.price != null &&
+        x.price != null
 
-        x.price >= 1000 &&
+        &&
 
-        x.liq.volume7d >= 14 &&
+        x.price >= 1000
+
+        &&
+
+        x.liq.volume7d >=
+        14
+
+        &&
 
         (
-          x.liq.daysToClear == null ||
-          x.liq.daysToClear <= 14
-        ) &&
+          x.liq.daysToClear ==
+          null
+
+          ||
+
+          x.liq.daysToClear <=
+          14
+        )
+
+        &&
 
         (
-          x.liq.lastSaleAgeDays == null ||
-          x.liq.lastSaleAgeDays <= 7
+          x.liq
+            .lastSaleAgeDays ==
+          null
+
+          ||
+
+          x.liq
+            .lastSaleAgeDays <=
+          7
         )
     )
 
@@ -659,17 +925,22 @@ function candidates(
    CRAFT CACHE
 ========================================================= */
 
-async function getCraft(
+async function fetchCraft(
   id
 ) {
 
   id =
-    Number(id);
+    Number(
+      id
+    );
 
 
   if (
-    craftCache.has(id)
+    craftCache.has(
+      id
+    )
   ) {
+
     return craftCache.get(
       id
     );
@@ -680,33 +951,84 @@ async function getCraft(
 
     const data =
       await api(
-        CRAFT_URL(id)
+        CRAFT_URL(
+          id
+        )
       );
 
+
     const value = {
-      ok: true,
+
+      ok:
+        true,
+
       data
     };
 
+
     craftCache.set(
       id,
       value
     );
+
 
     return value;
 
+
   } catch (error) {
 
+    /*
+      لا نخزن timeout / rate-limit
+      كفشل دائم.
+    */
+
+    const message =
+      String(
+        error.message || ""
+      );
+
+
+    if (
+      message.includes(
+        "timed out"
+      )
+
+      ||
+
+      message.includes(
+        "PSXI 429"
+      )
+    ) {
+
+      return {
+
+        ok:
+          false,
+
+        temporary:
+          true,
+
+        error:
+          message
+      };
+    }
+
+
     const value = {
-      ok: false,
+
+      ok:
+        false,
+
       error:
-        error.message
+        message
     };
+
 
     craftCache.set(
       id,
       value
     );
+
 
     return value;
   }
@@ -726,6 +1048,7 @@ function recipesOf(
       craftData?.recipes
     )
   ) {
+
     return [];
   }
 
@@ -768,6 +1091,7 @@ function materialsCost(
   const materials =
     [];
 
+
   let total =
     0;
 
@@ -779,12 +1103,15 @@ function materialsCost(
       qty
     ) => {
 
+
       const item =
 
         byId(
           items,
           source?.id
-        ) ||
+        )
+
+        ||
 
         byName(
           items,
@@ -799,7 +1126,8 @@ function materialsCost(
 
 
       const line =
-        pricing.unit == null
+        pricing.unit ==
+        null
           ? null
           : pricing.unit *
             qty;
@@ -842,10 +1170,12 @@ function materialsCost(
           null,
 
         totalCost:
-          line == null
+          line ==
+          null
             ? null
             : Number(
-                line.toFixed(2)
+                line
+                  .toFixed(2)
               )
       });
 
@@ -853,6 +1183,7 @@ function materialsCost(
       if (
         line == null
       ) {
+
         return false;
       }
 
@@ -878,7 +1209,10 @@ function materialsCost(
     ) {
 
       return {
-        ok: false,
+
+        ok:
+          false,
+
         materials
       };
     }
@@ -887,7 +1221,8 @@ function materialsCost(
 
   for (
     const ingredient
-    of recipe?.ingredients || []
+    of recipe?.ingredients ||
+    []
   ) {
 
     if (
@@ -902,7 +1237,10 @@ function materialsCost(
     ) {
 
       return {
-        ok: false,
+
+        ok:
+          false,
+
         materials
       };
     }
@@ -916,7 +1254,8 @@ function materialsCost(
 
     total:
       Number(
-        total.toFixed(2)
+        total
+          .toFixed(2)
       ),
 
     materials
@@ -925,7 +1264,7 @@ function materialsCost(
 
 
 /* =========================================================
-   PROFIT ANALYSIS
+   ANALYSIS
 ========================================================= */
 
 function analyze(
@@ -939,6 +1278,7 @@ function analyze(
       outputItem
     )
   ) {
+
     return null;
   }
 
@@ -948,17 +1288,20 @@ function analyze(
 
 
   /*
-    Don't treat HQ alternate result as guaranteed.
+    HQ alternate result
+    مب guaranteed.
   */
 
   if (
     Number(
       recipe?.result?.id
-    ) !==
+    )
+    !==
     Number(
       outputItem.itemId
     )
   ) {
+
     return null;
   }
 
@@ -971,18 +1314,19 @@ function analyze(
 
 
   /*
-    Critical false-positive protection.
-
-    Armor Plate II showed qty 12 but has no Stack market.
-    That kind of non-stack multi-yield is excluded.
+    يمنع false positives مثل Armor Plate II.
   */
 
   if (
-    qty > 1 &&
+    qty > 1
+
+    &&
+
     !hasStackMarket(
       outputItem
     )
   ) {
+
     return null;
   }
 
@@ -996,6 +1340,7 @@ function analyze(
   if (
     sell == null
   ) {
+
     return null;
   }
 
@@ -1010,6 +1355,7 @@ function analyze(
   if (
     !costs.ok
   ) {
+
     return null;
   }
 
@@ -1031,6 +1377,7 @@ function analyze(
   if (
     profit <= 0
   ) {
+
     return null;
   }
 
@@ -1045,6 +1392,7 @@ function analyze(
   if (
     !liq.eligible
   ) {
+
     return null;
   }
 
@@ -1056,7 +1404,8 @@ function analyze(
             (
               profit /
               costs.total
-            ) *
+            )
+            *
             100
           ).toFixed(2)
         )
@@ -1066,7 +1415,8 @@ function analyze(
   const profitPerSellDay =
     Number(
       (
-        profit /
+        profit
+        /
         Math.max(
           liq.batchDays ||
           0.25,
@@ -1085,7 +1435,8 @@ function analyze(
 
   const speedScore =
     Math.min(
-      liq.salesPerDay * 8,
+      liq.salesPerDay *
+      8,
       100
     );
 
@@ -1109,7 +1460,8 @@ function analyze(
 
 
   const saturationScore =
-    liq.afterCraftDays == null
+    liq.afterCraftDays ==
+    null
       ? 100
       : Math.max(
           0,
@@ -1117,7 +1469,8 @@ function analyze(
           (
             liq.afterCraftDays /
             14
-          ) *
+          )
+          *
           100
         );
 
@@ -1125,14 +1478,14 @@ function analyze(
   const score =
     Number(
       (
-        profitScore * 0.35 +
-
-        speedScore * 0.25 +
-
-        marginScore * 0.15 +
-
-        profitDayScore * 0.15 +
-
+        profitScore * 0.35
+        +
+        speedScore * 0.25
+        +
+        marginScore * 0.15
+        +
+        profitDayScore * 0.15
+        +
         saturationScore * 0.10
       ).toFixed(2)
     );
@@ -1204,6 +1557,105 @@ function analyze(
 
 
 /* =========================================================
+   EXPAND CRAFT CACHE IN PARALLEL
+========================================================= */
+
+async function expandCraftCache(
+  candidateList
+) {
+
+  if (
+    Date.now() -
+    lastExpansionAt <
+    EXPAND_COOLDOWN
+  ) {
+
+    return {
+
+      newCalls:
+        0,
+
+      scanned:
+        []
+    };
+  }
+
+
+  const selected =
+    [];
+
+
+  for (
+    const candidate
+    of candidateList
+  ) {
+
+    if (
+      selected.length >=
+      NEW_CRAFT_CALLS_PER_EXPANSION
+    ) {
+
+      break;
+    }
+
+
+    const id =
+      Number(
+        candidate.item.itemId
+      );
+
+
+    if (
+      craftCache.has(
+        id
+      )
+    ) {
+
+      continue;
+    }
+
+
+    selected.push(
+      candidate
+    );
+  }
+
+
+  lastExpansionAt =
+    Date.now();
+
+
+  /*
+    أهم تعديل:
+    الطلبات كلها بالتوازي.
+  */
+
+  await Promise.allSettled(
+
+    selected.map(
+      candidate =>
+        fetchCraft(
+          candidate.item.itemId
+        )
+    )
+  );
+
+
+  return {
+
+    newCalls:
+      selected.length,
+
+    scanned:
+      selected.map(
+        x =>
+          x.item.itemName
+      )
+  };
+}
+
+
+/* =========================================================
    TOP 20
 ========================================================= */
 
@@ -1225,67 +1677,10 @@ async function buildTop20() {
     );
 
 
-  let newCalls =
-    0;
-
-
-  const scannedThisRun =
-    [];
-
-
-  /*
-    Expand Craft cache only once per cooldown.
-  */
-
-  if (
-    Date.now() -
-    lastExpansionAt >=
-    EXPAND_COOLDOWN
-  ) {
-
-    for (
-      const candidate
-      of candidateList
-    ) {
-
-      if (
-        newCalls >=
-        NEW_CRAFT_CALLS_PER_EXPANSION
-      ) {
-        break;
-      }
-
-
-      const id =
-        Number(
-          candidate.item.itemId
-        );
-
-
-      if (
-        craftCache.has(id)
-      ) {
-        continue;
-      }
-
-
-      newCalls++;
-
-
-      scannedThisRun.push(
-        candidate.item.itemName
-      );
-
-
-      await getCraft(
-        id
-      );
-    }
-
-
-    lastExpansionAt =
-      Date.now();
-  }
+  const expansion =
+    await expandCraftCache(
+      candidateList
+    );
 
 
   const results =
@@ -1302,6 +1697,7 @@ async function buildTop20() {
         candidate.item
       )
     ) {
+
       continue;
     }
 
@@ -1317,6 +1713,7 @@ async function buildTop20() {
     if (
       !cached?.ok
     ) {
+
       continue;
     }
 
@@ -1339,6 +1736,7 @@ async function buildTop20() {
       if (
         result
       ) {
+
         results.push(
           result
         );
@@ -1367,7 +1765,10 @@ async function buildTop20() {
 
 
     if (
-      !previous ||
+      !previous
+
+      ||
+
       result.score >
       previous.score
     ) {
@@ -1394,6 +1795,7 @@ async function buildTop20() {
             result.itemId
           );
 
+
         return (
           item &&
           !excludedCategory(
@@ -1407,10 +1809,14 @@ async function buildTop20() {
       (a, b) =>
 
         b.score -
-        a.score ||
+        a.score
+
+        ||
 
         b.profitPerSellDay -
-        a.profitPerSellDay ||
+        a.profitPerSellDay
+
+        ||
 
         b.profit -
         a.profit
@@ -1433,9 +1839,10 @@ async function buildTop20() {
       craftCache.size,
 
     newCraftRequestsThisScan:
-      newCalls,
+      expansion.newCalls,
 
-    scannedThisRun,
+    scannedThisRun:
+      expansion.scanned,
 
     validOpportunities:
       ranked.length,
@@ -1491,7 +1898,8 @@ app.get(
 
     res.json({
 
-      ok: true,
+      ok:
+        true,
 
       tokenConfigured:
         !!PSXI_TOKEN,
@@ -1512,9 +1920,14 @@ app.get(
 
     try {
 
+      const result =
+        await buildTop20();
+
+
       res.json(
-        await buildTop20()
+        result
       );
+
 
     } catch (error) {
 
@@ -1576,10 +1989,11 @@ app.get(
           ),
 
         craft:
-          await getCraft(
+          await fetchCraft(
             item.itemId
           )
       });
+
 
     } catch (error) {
 
@@ -1600,7 +2014,7 @@ app.listen(
   () => {
 
     console.log(
-      `HorizonXI Profit Scanner v3.0 running on ${PORT}`
+      `HorizonXI Profit Scanner v3.1 running on ${PORT}`
     );
   }
 );
