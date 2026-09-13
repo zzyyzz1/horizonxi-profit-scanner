@@ -19,6 +19,32 @@ const MARKET_CACHE_MS = 5 * 60 * 1000;
 
 
 /* =========================================================
+   VERIFIED STACK SIZES
+
+   IMPORTANT:
+   لا نفترض stack size إذا ما نعرفه.
+   Unknown items fall back to Single pricing.
+========================================================= */
+
+const STACK_SIZE_BY_ID = {
+
+  // Crystals
+  4096: 12, // Fire Crystal
+  4097: 12, // Ice Crystal
+  4098: 12, // Wind Crystal
+  4099: 12, // Earth Crystal
+  4100: 12, // Lightning Crystal
+  4101: 12, // Water Crystal
+  4102: 12, // Light Crystal
+  4103: 12, // Dark Crystal
+
+  // Ice Staff recipe materials
+  719: 12,  // Ebony Lumber
+  1300: 12  // Ice Bead
+};
+
+
+/* =========================================================
    PSXI
 ========================================================= */
 
@@ -31,19 +57,24 @@ function headers() {
 }
 
 async function psxiFetch(url) {
+
   if (!PSXI_TOKEN) {
-    throw new Error("PSXI_TOKEN is not configured");
+    throw new Error(
+      "PSXI_TOKEN is not configured"
+    );
   }
 
-  const r = await fetch(url, {
-    headers: headers()
-  });
+  const response =
+    await fetch(url, {
+      headers: headers()
+    });
 
-  const text = await r.text();
+  const text =
+    await response.text();
 
-  if (!r.ok) {
+  if (!response.ok) {
     throw new Error(
-      `PSXI ${r.status}: ${text.slice(0, 400)}`
+      `PSXI ${response.status}: ${text.slice(0, 400)}`
     );
   }
 
@@ -52,58 +83,86 @@ async function psxiFetch(url) {
 
 
 /* =========================================================
-   MARKET
+   MARKET CACHE
 ========================================================= */
 
 async function getMarket() {
+
   const now = Date.now();
 
   if (
     marketCache &&
-    now - marketCacheTime < MARKET_CACHE_MS
+    now - marketCacheTime <
+      MARKET_CACHE_MS
   ) {
     return marketCache;
   }
 
-  marketCache = await psxiFetch(MARKET_URL);
+  marketCache =
+    await psxiFetch(
+      MARKET_URL
+    );
+
   marketCacheTime = now;
 
   return marketCache;
 }
 
 function getMarketItems(market) {
+
   if (Array.isArray(market)) {
     return market;
   }
 
-  if (Array.isArray(market?.data)) {
+  if (
+    Array.isArray(
+      market?.data
+    )
+  ) {
     return market.data;
   }
 
-  if (Array.isArray(market?.items)) {
+  if (
+    Array.isArray(
+      market?.items
+    )
+  ) {
     return market.items;
   }
 
   return [];
 }
 
-function normalizeName(name) {
-  return String(name || "")
+
+/* =========================================================
+   ITEM SEARCH
+========================================================= */
+
+function normalizeName(value) {
+  return String(value || "")
     .trim()
     .toLowerCase();
 }
 
-function findItem(items, search) {
-  const q = normalizeName(search);
+function findItem(
+  items,
+  search
+) {
 
-  if (!q) {
+  const query =
+    normalizeName(search);
+
+  if (!query) {
     return null;
   }
 
-  const exact = items.find(
-    item =>
-      normalizeName(item.itemName) === q
-  );
+  const exact =
+    items.find(
+      item =>
+        normalizeName(
+          item.itemName
+        ) === query
+    );
 
   if (exact) {
     return exact;
@@ -111,49 +170,338 @@ function findItem(items, search) {
 
   return items.find(
     item =>
-      normalizeName(item.itemName).includes(q)
+      normalizeName(
+        item.itemName
+      ).includes(query)
   );
 }
 
-function findItemById(items, id) {
+function findItemById(
+  items,
+  id
+) {
+
   return items.find(
     item =>
-      Number(item.itemId) === Number(id)
+      Number(item.itemId) ===
+      Number(id)
   );
 }
 
 
 /* =========================================================
-   STACK / NON-STACK DETECTION
+   STACK DATA
 ========================================================= */
 
-function hasStackMarketData(item) {
-  const stack = item?.ah?.stack || {};
+function getKnownStackSize(
+  item
+) {
+
+  if (!item) {
+    return null;
+  }
+
+  const id =
+    Number(item.itemId);
+
+  return (
+    STACK_SIZE_BY_ID[id] ??
+    null
+  );
+}
+
+function hasRealStackData(
+  item
+) {
+
+  const stack =
+    item?.ah?.stack || {};
 
   return (
     stack.lastSale != null ||
-    stack.avg != null ||
     stack.median != null ||
-    Number(stack.volume || 0) > 0 ||
-    Number(item?.ah?.currentStackStock || 0) > 0
+    stack.avg != null ||
+    Number(
+      stack.volume || 0
+    ) > 0 ||
+    Number(
+      item?.ah
+        ?.currentStackStock || 0
+    ) > 0
   );
 }
 
-function isStackable(item) {
-  return hasStackMarketData(item);
+function isStackable(
+  item
+) {
+
+  return hasRealStackData(
+    item
+  );
 }
 
 
 /* =========================================================
-   LIQUIDITY / SPEED OF SALE
+   RAW PRICES
 ========================================================= */
 
-function getLiquidityInfo(item) {
+function getSinglePrice(
+  item
+) {
+
+  const single =
+    item?.ah?.single || {};
+
+  const price =
+    single.lastSale ??
+    single.median ??
+    single.avg ??
+    null;
+
+  return (
+    price != null
+      ? Number(price)
+      : null
+  );
+}
+
+function getStackPrice(
+  item
+) {
+
+  const stack =
+    item?.ah?.stack || {};
+
+  const price =
+    stack.lastSale ??
+    stack.median ??
+    stack.avg ??
+    null;
+
+  return (
+    price != null
+      ? Number(price)
+      : null
+  );
+}
+
+
+/* =========================================================
+   MATERIAL PURCHASE OPTIMIZER
+========================================================= */
+
+function getBestMaterialPrice(
+  item
+) {
+
+  if (!item) {
+    return {
+      found: false,
+      stackable: false,
+      stackSize: null,
+      singlePrice: null,
+      stackPrice: null,
+      stackUnitPrice: null,
+      selectedUnitPrice: null,
+      selectedMode: "missing"
+    };
+  }
+
+  const singlePrice =
+    getSinglePrice(item);
+
+  const stackPrice =
+    getStackPrice(item);
+
+  const stackSize =
+    getKnownStackSize(item);
+
+  const stackable =
+    isStackable(item);
+
+  let stackUnitPrice = null;
+
+  if (
+    stackable &&
+    stackSize &&
+    stackPrice != null
+  ) {
+
+    stackUnitPrice =
+      stackPrice /
+      stackSize;
+  }
+
+  let selectedUnitPrice = null;
+  let selectedMode =
+    "unpriced";
+
+  /*
+    Compare Single vs Stack-per-unit.
+  */
+
+  if (
+    singlePrice != null &&
+    stackUnitPrice != null
+  ) {
+
+    if (
+      stackUnitPrice <
+      singlePrice
+    ) {
+
+      selectedUnitPrice =
+        stackUnitPrice;
+
+      selectedMode =
+        "stack";
+
+    } else {
+
+      selectedUnitPrice =
+        singlePrice;
+
+      selectedMode =
+        "single";
+    }
+
+  } else if (
+    singlePrice != null
+  ) {
+
+    selectedUnitPrice =
+      singlePrice;
+
+    selectedMode =
+      "single";
+
+  } else if (
+    stackUnitPrice != null
+  ) {
+
+    selectedUnitPrice =
+      stackUnitPrice;
+
+    selectedMode =
+      "stack";
+  }
+
+  return {
+
+    found: true,
+
+    stackable,
+
+    stackSize,
+
+    singlePrice,
+
+    stackPrice,
+
+    stackUnitPrice:
+      stackUnitPrice != null
+        ? Number(
+            stackUnitPrice
+              .toFixed(2)
+          )
+        : null,
+
+    selectedUnitPrice:
+      selectedUnitPrice != null
+        ? Number(
+            selectedUnitPrice
+              .toFixed(2)
+          )
+        : null,
+
+    selectedMode,
+
+    singleStock:
+      Number(
+        item?.ah
+          ?.currentStock || 0
+      ),
+
+    stackStock:
+      Number(
+        item?.ah
+          ?.currentStackStock || 0
+      )
+  };
+}
+
+
+/* =========================================================
+   OUTPUT SALE PRICE
+
+   Output is different from material buying.
+
+   Non-stackable gear/weapons:
+   Single only.
+========================================================= */
+
+function getOutputPrice(
+  item
+) {
+
+  const singlePrice =
+    getSinglePrice(item);
+
+  const stackable =
+    isStackable(item);
+
+  const stackSize =
+    getKnownStackSize(item);
+
+  const stackPrice =
+    getStackPrice(item);
+
+  let saleMode =
+    "single-only";
+
+  if (stackable) {
+    saleMode =
+      "single";
+  }
+
+  return {
+
+    stackable,
+
+    stackSize,
+
+    singlePrice,
+
+    stackPrice,
+
+    saleMode,
+
+    unitPrice:
+      singlePrice
+  };
+}
+
+
+/* =========================================================
+   LIQUIDITY ENGINE
+========================================================= */
+
+function getLiquidityInfo(
+  item
+) {
+
   const stock =
-    Number(item?.ah?.currentStock || 0);
+    Number(
+      item?.ah
+        ?.currentStock || 0
+    );
 
   const volume7d =
-    Number(item?.ah?.single?.volume || 0);
+    Number(
+      item?.ah
+        ?.single
+        ?.volume || 0
+    );
 
   const salesPerDay =
     volume7d / 7;
@@ -161,47 +509,47 @@ function getLiquidityInfo(item) {
   let daysToSell = null;
 
   if (salesPerDay > 0) {
+
     daysToSell =
-      stock / salesPerDay;
+      stock /
+      salesPerDay;
   }
 
-  let liquidity = "dead";
+  let liquidity =
+    "dead";
 
   if (volume7d >= 1) {
-    liquidity = "very-slow";
+    liquidity =
+      "very-slow";
   }
 
   if (volume7d >= 7) {
-    liquidity = "slow";
+    liquidity =
+      "slow";
   }
 
   if (volume7d >= 14) {
-    liquidity = "medium";
+    liquidity =
+      "medium";
   }
 
   if (volume7d >= 35) {
-    liquidity = "fast";
+    liquidity =
+      "fast";
   }
 
   if (volume7d >= 70) {
-    liquidity = "very-fast";
+    liquidity =
+      "very-fast";
   }
 
-  let saturated = false;
-
-  if (
+  const saturated =
     daysToSell != null &&
-    daysToSell > 14
-  ) {
-    saturated = true;
-  }
+    daysToSell > 14;
 
   /*
-    شروط الدخول إلى Top 20:
-
-    - لازم فيه مبيعات حقيقية
-    - على الأقل 14 مبيعة خلال 7 أيام
-    - المخزون الحالي ما يحتاج أكثر من 14 يوم للتصريف
+    Minimum liquidity rule
+    for Top 20.
   */
 
   const top20Eligible =
@@ -212,145 +560,87 @@ function getLiquidityInfo(item) {
     );
 
   return {
+
     stock,
+
     volume7d,
 
     salesPerDay:
       Number(
-        salesPerDay.toFixed(2)
+        salesPerDay
+          .toFixed(2)
       ),
 
     daysToSell:
       daysToSell != null
         ? Number(
-            daysToSell.toFixed(2)
+            daysToSell
+              .toFixed(2)
           )
         : null,
 
     liquidity,
+
     saturated,
+
     top20Eligible
   };
 }
 
 
 /* =========================================================
-   PRICES
+   CRAFT PARSING
 ========================================================= */
 
-function getSinglePrice(item) {
-  const single = item?.ah?.single || {};
+function extractRecipes(
+  craftData
+) {
 
-  const price =
-    single.lastSale ??
-    single.median ??
-    single.avg ??
-    null;
-
-  return price != null
-    ? Number(price)
-    : null;
-}
-
-function getStackPrice(item) {
-  const stack = item?.ah?.stack || {};
-
-  const price =
-    stack.lastSale ??
-    stack.median ??
-    stack.avg ??
-    null;
-
-  return price != null
-    ? Number(price)
-    : null;
-}
-
-function getPriceInfo(item) {
-  if (!item) {
-    return {
-      found: false,
-      stackable: false,
-      singlePrice: null,
-      stackPrice: null,
-      selectedPrice: null,
-      selectedMode: "missing"
-    };
-  }
-
-  const stackable = isStackable(item);
-  const singlePrice = getSinglePrice(item);
-  const stackPrice = getStackPrice(item);
-
-  let selectedPrice = null;
-  let selectedMode = "unpriced";
-
-  /*
-    حالياً نستخدم Single للوحدة.
-    Stack optimization الحقيقي بنضيفه بعد ما نثبت stack size.
-  */
-
-  if (singlePrice != null) {
-    selectedPrice = singlePrice;
-    selectedMode = "single";
-  }
-
-  return {
-    found: true,
-    stackable,
-    singlePrice,
-    stackPrice,
-    selectedPrice,
-    selectedMode,
-
-    singleStock:
-      Number(item?.ah?.currentStock || 0),
-
-    stackStock:
-      Number(item?.ah?.currentStackStock || 0),
-
-    singleVolume7d:
-      Number(item?.ah?.single?.volume || 0),
-
-    stackVolume7d:
-      Number(item?.ah?.stack?.volume || 0),
-
-    asOf:
-      item?.asOf ?? null
-  };
-}
-
-
-/* =========================================================
-   CRAFT STRUCTURE
-========================================================= */
-
-function extractRecipeEntries(craftData) {
-  if (!Array.isArray(craftData?.recipes)) {
+  if (
+    !Array.isArray(
+      craftData?.recipes
+    )
+  ) {
     return [];
   }
 
   return craftData.recipes
-    .map(entry => {
-      if (entry?.recipe) {
+    .map(
+      entry => {
+
+        if (entry?.recipe) {
+
+          return {
+
+            recipe:
+              entry.recipe,
+
+            tiers:
+              Array.isArray(
+                entry.tiers
+              )
+                ? entry.tiers
+                : []
+          };
+        }
+
         return {
-          recipe: entry.recipe,
+
+          recipe:
+            entry,
+
           tiers:
-            Array.isArray(entry.tiers)
+            Array.isArray(
+              entry?.tiers
+            )
               ? entry.tiers
               : []
         };
       }
-
-      return {
-        recipe: entry,
-        tiers:
-          Array.isArray(entry?.tiers)
-            ? entry.tiers
-            : []
-      };
-    })
-    .filter(x => x.recipe);
+    )
+    .filter(
+      x => x.recipe
+    );
 }
 
 
@@ -358,16 +648,26 @@ function extractRecipeEntries(craftData) {
    PROFIT ENGINE
 ========================================================= */
 
-async function calculateProfit(search) {
-  const market = await getMarket();
-  const items = getMarketItems(market);
+async function calculateProfit(
+  search
+) {
 
-  const outputItem = findItem(
-    items,
-    search
-  );
+  const market =
+    await getMarket();
+
+  const items =
+    getMarketItems(
+      market
+    );
+
+  const outputItem =
+    findItem(
+      items,
+      search
+    );
 
   if (!outputItem) {
+
     throw new Error(
       `Output item not found: ${search}`
     );
@@ -380,67 +680,73 @@ async function calculateProfit(search) {
       )
     );
 
-  const recipeEntries =
-    extractRecipeEntries(
+  const recipes =
+    extractRecipes(
       craftData
     );
 
-  if (!recipeEntries.length) {
+  if (!recipes.length) {
+
     throw new Error(
       `No recipes found for ${outputItem.itemName}`
     );
   }
 
-  const recipeEntry =
-    recipeEntries[0];
+  const entry =
+    recipes[0];
 
   const recipe =
-    recipeEntry.recipe;
+    entry.recipe;
 
   const tiers =
-    recipeEntry.tiers;
+    entry.tiers;
 
   const outputQty =
     Number(
-      recipe?.result?.qty || 1
+      recipe?.result?.qty ||
+      1
     );
 
   const outputPrice =
-    getPriceInfo(
+    getOutputPrice(
       outputItem
     );
 
   if (
-    outputPrice.selectedPrice == null
+    outputPrice.unitPrice ==
+    null
   ) {
+
     throw new Error(
-      "Output item has no usable sale price"
+      "Output has no usable Single sale price"
     );
   }
 
-
-  /* -------------------------
-     OUTPUT
-  ------------------------- */
-
-  const outputRevenue =
-    outputPrice.selectedPrice *
+  const saleRevenue =
+    outputPrice.unitPrice *
     outputQty;
 
 
-  /* -------------------------
+  /* =====================================================
      MATERIALS
-  ------------------------- */
+  ===================================================== */
 
   const materials = [];
 
   let materialCost = 0;
-  let missingPrice = false;
+
+  let missingPrice =
+    false;
 
 
-  /* Crystal */
+  /* -------------------------
+     Crystal
+  ------------------------- */
 
-  if (recipe?.crystal?.name) {
+  if (
+    recipe?.crystal?.name
+  ) {
+
     const crystalItem =
       findItemById(
         items,
@@ -452,28 +758,36 @@ async function calculateProfit(search) {
       );
 
     const price =
-      getPriceInfo(
+      getBestMaterialPrice(
         crystalItem
       );
 
     const qty = 1;
 
     const total =
-      price.selectedPrice != null
-        ? price.selectedPrice * qty
+      price.selectedUnitPrice != null
+        ? price.selectedUnitPrice *
+          qty
         : null;
 
     if (total == null) {
-      missingPrice = true;
+
+      missingPrice =
+        true;
+
     } else {
-      materialCost += total;
+
+      materialCost +=
+        total;
     }
 
     materials.push({
-      type: "crystal",
+
+      type:
+        "crystal",
 
       itemId:
-        recipe.crystal.id ?? null,
+        recipe.crystal.id,
 
       itemName:
         recipe.crystal.name,
@@ -483,20 +797,30 @@ async function calculateProfit(search) {
       stackable:
         price.stackable,
 
+      stackSize:
+        price.stackSize,
+
       singlePrice:
         price.singlePrice,
 
       stackPrice:
         price.stackPrice,
 
-      priceUsed:
-        price.selectedPrice,
+      stackUnitPrice:
+        price.stackUnitPrice,
 
-      priceMode:
+      bestUnitPrice:
+        price.selectedUnitPrice,
+
+      purchaseMode:
         price.selectedMode,
 
       totalCost:
-        total,
+        total != null
+          ? Number(
+              total.toFixed(2)
+            )
+          : null,
 
       singleStock:
         price.singleStock,
@@ -507,12 +831,16 @@ async function calculateProfit(search) {
   }
 
 
-  /* Ingredients */
+  /* -------------------------
+     Ingredients
+  ------------------------- */
 
   for (
     const ingredient
-    of recipe?.ingredients || []
+    of recipe?.ingredients ||
+    []
   ) {
+
     const marketItem =
       findItemById(
         items,
@@ -524,31 +852,40 @@ async function calculateProfit(search) {
       );
 
     const price =
-      getPriceInfo(
+      getBestMaterialPrice(
         marketItem
       );
 
     const qty =
       Number(
-        ingredient.qty || 1
+        ingredient.qty ||
+        1
       );
 
     const total =
-      price.selectedPrice != null
-        ? price.selectedPrice * qty
+      price.selectedUnitPrice != null
+        ? price.selectedUnitPrice *
+          qty
         : null;
 
     if (total == null) {
-      missingPrice = true;
+
+      missingPrice =
+        true;
+
     } else {
-      materialCost += total;
+
+      materialCost +=
+        total;
     }
 
     materials.push({
-      type: "ingredient",
+
+      type:
+        "ingredient",
 
       itemId:
-        ingredient.id ?? null,
+        ingredient.id,
 
       itemName:
         ingredient.name,
@@ -558,20 +895,30 @@ async function calculateProfit(search) {
       stackable:
         price.stackable,
 
+      stackSize:
+        price.stackSize,
+
       singlePrice:
         price.singlePrice,
 
       stackPrice:
         price.stackPrice,
 
-      priceUsed:
-        price.selectedPrice,
+      stackUnitPrice:
+        price.stackUnitPrice,
 
-      priceMode:
+      bestUnitPrice:
+        price.selectedUnitPrice,
+
+      purchaseMode:
         price.selectedMode,
 
       totalCost:
-        total,
+        total != null
+          ? Number(
+              total.toFixed(2)
+            )
+          : null,
 
       singleStock:
         price.singleStock,
@@ -582,30 +929,44 @@ async function calculateProfit(search) {
   }
 
 
-  /* -------------------------
+  /* =====================================================
      PROFIT
-  ------------------------- */
+  ===================================================== */
 
-  const grossProfit =
+  const finalMaterialCost =
     missingPrice
       ? null
-      : outputRevenue -
-        materialCost;
+      : Number(
+          materialCost
+            .toFixed(2)
+        );
+
+  const grossProfit =
+    finalMaterialCost != null
+      ? Number(
+          (
+            saleRevenue -
+            finalMaterialCost
+          ).toFixed(2)
+        )
+      : null;
 
   const marginPct =
     grossProfit != null &&
-    materialCost > 0
-      ? (
-          grossProfit /
-          materialCost *
-          100
+    finalMaterialCost > 0
+      ? Number(
+          (
+            grossProfit /
+            finalMaterialCost *
+            100
+          ).toFixed(2)
         )
       : null;
 
 
-  /* -------------------------
+  /* =====================================================
      LIQUIDITY
-  ------------------------- */
+  ===================================================== */
 
   const liquidity =
     getLiquidityInfo(
@@ -613,16 +974,18 @@ async function calculateProfit(search) {
     );
 
 
-  /* -------------------------
+  /* =====================================================
      OPPORTUNITY SCORE
-  ------------------------- */
+  ===================================================== */
 
-  let opportunityScore = null;
+  let opportunityScore =
+    null;
 
   if (
     grossProfit != null &&
     grossProfit > 0
   ) {
+
     const profitScore =
       Math.min(
         grossProfit / 1000,
@@ -630,53 +993,55 @@ async function calculateProfit(search) {
       );
 
     const marginScore =
-      marginPct != null
-        ? Math.min(
-            Math.max(
-              marginPct,
-              0
-            ),
-            100
-          )
-        : 0;
+      Math.min(
+        Math.max(
+          marginPct || 0,
+          0
+        ),
+        100
+      );
 
     const speedScore =
-      liquidity.salesPerDay > 0
-        ? Math.min(
-            liquidity.salesPerDay * 10,
-            100
-          )
-        : 0;
+      Math.min(
+        liquidity.salesPerDay *
+          10,
+        100
+      );
 
-    const saturationPenalty =
+    let saturationPenalty =
+      0;
+
+    if (
       liquidity.saturated
-        ? 30
-        : 0;
+    ) {
+      saturationPenalty =
+        35;
+    }
 
     opportunityScore =
-      (
-        profitScore * 0.45 +
-        marginScore * 0.20 +
-        speedScore * 0.35 -
-        saturationPenalty
-      );
+      profitScore * 0.45 +
+      marginScore * 0.20 +
+      speedScore * 0.35 -
+      saturationPenalty;
 
     opportunityScore =
       Number(
         Math.max(
-          0,
-          opportunityScore
+          opportunityScore,
+          0
         ).toFixed(2)
       );
   }
 
 
-  /* -------------------------
+  /* =====================================================
      RESULT
-  ------------------------- */
+  ===================================================== */
 
   return {
+
     output: {
+
       itemId:
         outputItem.itemId,
 
@@ -689,10 +1054,11 @@ async function calculateProfit(search) {
       stackable:
         outputPrice.stackable,
 
+      stackSize:
+        outputPrice.stackSize,
+
       saleMode:
-        outputPrice.stackable
-          ? "single-currently"
-          : "single-only",
+        outputPrice.saleMode,
 
       singlePrice:
         outputPrice.singlePrice,
@@ -701,31 +1067,24 @@ async function calculateProfit(search) {
         outputPrice.stackPrice,
 
       unitPriceUsed:
-        outputPrice.selectedPrice,
+        outputPrice.unitPrice,
 
       revenue:
-        outputRevenue,
+        saleRevenue,
 
       volume7d:
-        Number(
-          outputItem?.ah?.single?.volume || 0
-        ),
+        liquidity.volume7d,
 
       stock:
-        Number(
-          outputItem?.ah?.currentStock || 0
-        ),
-
-      stackStock:
-        Number(
-          outputItem?.ah?.currentStackStock || 0
-        ),
+        liquidity.stock,
 
       asOf:
         outputItem.asOf
     },
 
+
     recipe: {
+
       recipeId:
         recipe.id,
 
@@ -741,54 +1100,56 @@ async function calculateProfit(search) {
       skills:
         recipe.skills,
 
-      desynth:
-        recipe.desynth ?? false,
-
       tiers
     },
 
+
     materials,
 
-    totals: {
-      materialCost:
-        missingPrice
-          ? null
-          : materialCost,
 
-      saleRevenue:
-        outputRevenue,
+    totals: {
+
+      materialCost:
+        finalMaterialCost,
+
+      saleRevenue,
 
       grossProfit,
 
-      marginPct:
-        marginPct != null
-          ? Number(
-              marginPct.toFixed(2)
-            )
-          : null
+      marginPct
     },
+
 
     liquidity,
 
+
     opportunity: {
+
       eligibleForTop20:
+
         liquidity.top20Eligible &&
+
+        !liquidity.saturated &&
+
         grossProfit != null &&
+
         grossProfit > 0,
 
       score:
         opportunityScore
     },
 
+
     pricing: {
+
       missingMaterialPrice:
         missingPrice,
 
-      stackOptimization:
-        "pending-stack-size-data",
+      verifiedStackSizesOnly:
+        true,
 
       rule:
-        "Non-stackable outputs use Single only. Stack-capable materials are detected separately. Exact stack unit optimization will be enabled after verified stack-size data is added."
+        "Materials use the cheapest verified price per unit between Single and Stack. Non-stackable outputs such as weapons, armor and Ice Staff use Single only. Unknown stack sizes never use guessed Stack pricing."
     }
   };
 }
@@ -801,10 +1162,16 @@ async function calculateProfit(search) {
 app.get(
   "/api/health",
   (req, res) => {
+
     res.json({
+
       ok: true,
+
       tokenConfigured:
-        !!PSXI_TOKEN
+        !!PSXI_TOKEN,
+
+      marketCached:
+        !!marketCache
     });
   }
 );
@@ -813,7 +1180,9 @@ app.get(
 app.get(
   "/api/item",
   async (req, res) => {
+
     try {
+
       const market =
         await getMarket();
 
@@ -829,6 +1198,7 @@ app.get(
         );
 
       if (!item) {
+
         return res
           .status(404)
           .json({
@@ -838,89 +1208,42 @@ app.get(
       }
 
       res.json({
+
         itemId:
           item.itemId,
 
         itemName:
           item.itemName,
 
-        categorySlug:
-          item.categorySlug,
-
         stackable:
           isStackable(item),
 
-        prices:
-          getPriceInfo(item),
+        stackSize:
+          getKnownStackSize(
+            item
+          ),
+
+        materialPricing:
+          getBestMaterialPrice(
+            item
+          ),
 
         liquidity:
-          getLiquidityInfo(item),
+          getLiquidityInfo(
+            item
+          ),
 
-        ah:
-          item.ah,
-
-        bazaar:
-          item.bazaar,
-
-        asOf:
-          item.asOf
+        market:
+          item
       });
 
     } catch (e) {
+
       res
         .status(500)
         .json({
-          error: e.message
-        });
-    }
-  }
-);
-
-
-app.get(
-  "/api/item-with-craft",
-  async (req, res) => {
-    try {
-      const market =
-        await getMarket();
-
-      const items =
-        getMarketItems(
-          market
-        );
-
-      const item =
-        findItem(
-          items,
-          req.query.search
-        );
-
-      if (!item) {
-        return res
-          .status(404)
-          .json({
-            error:
-              "Item not found"
-          });
-      }
-
-      const craft =
-        await psxiFetch(
-          CRAFT_ITEM_URL(
-            item.itemId
-          )
-        );
-
-      res.json({
-        market: item,
-        craft
-      });
-
-    } catch (e) {
-      res
-        .status(500)
-        .json({
-          error: e.message
+          error:
+            e.message
         });
     }
   }
@@ -930,13 +1253,17 @@ app.get(
 app.get(
   "/api/profit",
   async (req, res) => {
+
     try {
+
       const search =
         String(
-          req.query.search || ""
+          req.query.search ||
+          ""
         ).trim();
 
       if (!search) {
+
         return res
           .status(400)
           .json({
@@ -953,10 +1280,68 @@ app.get(
       res.json(result);
 
     } catch (e) {
+
       res
         .status(500)
         .json({
-          error: e.message
+          error:
+            e.message
+        });
+    }
+  }
+);
+
+
+app.get(
+  "/api/item-with-craft",
+  async (req, res) => {
+
+    try {
+
+      const market =
+        await getMarket();
+
+      const items =
+        getMarketItems(
+          market
+        );
+
+      const item =
+        findItem(
+          items,
+          req.query.search
+        );
+
+      if (!item) {
+
+        return res
+          .status(404)
+          .json({
+            error:
+              "Item not found"
+          });
+      }
+
+      const craft =
+        await psxiFetch(
+          CRAFT_ITEM_URL(
+            item.itemId
+          )
+        );
+
+      res.json({
+        market:
+          item,
+        craft
+      });
+
+    } catch (e) {
+
+      res
+        .status(500)
+        .json({
+          error:
+            e.message
         });
     }
   }
@@ -966,6 +1351,7 @@ app.get(
 app.listen(
   PORT,
   () => {
+
     console.log(
       `HorizonXI Profit Scanner running on port ${PORT}`
     );
