@@ -2,169 +2,404 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+  >
   <title>HorizonXI Profit Scanner</title>
+
   <style>
-    body{
-      margin:0;
-      background:#08111b;
-      color:#eef5ff;
-      font-family:Arial,sans-serif;
+    * {
+      box-sizing: border-box;
     }
-    main{
-      max-width:900px;
-      margin:auto;
-      padding:24px;
+
+    body {
+      margin: 0;
+      background: #08111b;
+      color: #eef5ff;
+      font-family:
+        Arial,
+        Helvetica,
+        sans-serif;
     }
-    .card{
-      background:#111b28;
-      border:1px solid #29394e;
-      border-radius:14px;
-      padding:18px;
-      margin-top:20px;
+
+    main {
+      max-width: 1450px;
+      margin: auto;
+      padding: 22px;
     }
-    input,button{
-      padding:12px 14px;
-      border-radius:9px;
-      border:1px solid #344a65;
-      background:#172435;
-      color:white;
-      font-size:16px;
+
+    h1 {
+      margin-bottom: 6px;
     }
-    button{
-      background:#1769b6;
-      font-weight:bold;
-      cursor:pointer;
+
+    .sub {
+      color: #92a7bd;
+      margin-bottom: 22px;
     }
-    .row{
-      display:flex;
-      gap:10px;
-      flex-wrap:wrap;
+
+    .toolbar {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 18px;
     }
-    .result{
-      display:grid;
-      grid-template-columns:repeat(4,1fr);
-      gap:10px;
-      margin-top:18px;
+
+    button {
+      background: #1670c5;
+      color: white;
+      border: 0;
+      padding: 12px 17px;
+      border-radius: 9px;
+      font-weight: 700;
+      cursor: pointer;
     }
-    .box{
-      background:#162231;
-      padding:14px;
-      border-radius:10px;
+
+    button:hover {
+      opacity: .9;
     }
-    .label{
-      color:#8fa4be;
-      font-size:13px;
+
+    .secondary {
+      background: #1c2938;
+      border: 1px solid #35475b;
     }
-    .value{
-      font-size:22px;
-      font-weight:bold;
-      margin-top:5px;
+
+    .status {
+      color: #96abc1;
+      margin-bottom: 14px;
     }
-    .error{color:#ff7474;margin-top:12px}
-    .ok{color:#5fe090;margin-top:12px}
-    @media(max-width:700px){
-      .result{grid-template-columns:1fr 1fr}
+
+    .stats {
+      display: grid;
+      grid-template-columns:
+        repeat(
+          auto-fit,
+          minmax(170px, 1fr)
+        );
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+
+    .stat {
+      background: #111c29;
+      border: 1px solid #27394d;
+      border-radius: 12px;
+      padding: 14px;
+    }
+
+    .stat-label {
+      color: #8298af;
+      font-size: 12px;
+      margin-bottom: 5px;
+    }
+
+    .stat-value {
+      font-size: 23px;
+      font-weight: 700;
+    }
+
+    .panel {
+      background: #111c29;
+      border: 1px solid #27394d;
+      border-radius: 14px;
+      overflow: hidden;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 1150px;
+    }
+
+    th,
+    td {
+      text-align: left;
+      padding: 13px 12px;
+      border-bottom:
+        1px solid #223245;
+      white-space: nowrap;
+    }
+
+    th {
+      background: #152232;
+      color: #9bb0c6;
+      font-size: 12px;
+      position: sticky;
+      top: 0;
+    }
+
+    tbody tr {
+      cursor: pointer;
+    }
+
+    tbody tr:hover {
+      background: #172538;
+    }
+
+    .profit {
+      color: #6ee59b;
+      font-weight: 700;
+    }
+
+    .loss {
+      color: #ff7777;
+    }
+
+    .muted {
+      color: #8ea3ba;
+    }
+
+    .empty {
+      padding: 32px;
+      color: #9fb1c5;
+      text-align: center;
+    }
+
+    .modal-bg {
+      position: fixed;
+      inset: 0;
+      background:
+        rgba(0,0,0,.72);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      padding: 20px;
+    }
+
+    .modal {
+      width: min(1000px, 100%);
+      max-height: 90vh;
+      overflow-y: auto;
+      background: #0f1926;
+      border: 1px solid #31445a;
+      border-radius: 16px;
+      padding: 20px;
+    }
+
+    .modal-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 15px;
+      align-items: center;
+      margin-bottom: 15px;
+    }
+
+    .close {
+      background: #263649;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns:
+        repeat(
+          auto-fit,
+          minmax(180px, 1fr)
+        );
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+
+    .box {
+      background: #152232;
+      border: 1px solid #27394d;
+      border-radius: 10px;
+      padding: 12px;
+    }
+
+    .box-label {
+      color: #899fb6;
+      font-size: 12px;
+      margin-bottom: 4px;
+    }
+
+    .box-value {
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    .materials {
+      width: 100%;
+      min-width: 780px;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: #1f3248;
+      font-size: 11px;
+    }
+
+    @media (max-width: 700px) {
+      main {
+        padding: 14px;
+      }
+
+      h1 {
+        font-size: 25px;
+      }
     }
   </style>
 </head>
+
 <body>
+
 <main>
-  <h1>HorizonXI Profit Scanner</h1>
-  <p>Live HorizonXI market data via PSXI API</p>
 
-  <div class="card">
-    <h2>Live Item Search</h2>
+  <h1>
+    HorizonXI Profit Scanner
+  </h1>
 
-    <div class="row">
-      <input id="search" value="Fire Crystal" placeholder="Item name">
-      <button onclick="getItem()">Get Live Price</button>
-    </div>
-
-    <div id="status"></div>
-    <div id="result"></div>
+  <div class="sub">
+    Top profitable crafting opportunities
+    based on profit, sales speed and
+    current market saturation.
   </div>
-</main>
 
-<script>
-async function getItem() {
-  const search = document.getElementById("search").value.trim();
-  const status = document.getElementById("status");
-  const result = document.getElementById("result");
+  <div class="toolbar">
 
-  status.className = "";
-  status.textContent = "Loading...";
-  result.innerHTML = "";
+    <button onclick="loadTop20()">
+      Refresh Top 20
+    </button>
 
-  try {
-    const r = await fetch("/api/item?search=" + encodeURIComponent(search));
-    const d = await r.json();
+    <button
+      class="secondary"
+      onclick="location.reload()"
+    >
+      Reload Page
+    </button>
 
-    if (!r.ok) {
-      throw new Error(d.error || "Request failed");
-    }
+  </div>
 
-    const singlePrice =
-      d.singlePrice ??
-      d.price ??
-      d.single ??
-      d.currentPrice ??
-      null;
+  <div
+    id="status"
+    class="status"
+  >
+    Loading...
+  </div>
 
-    const stackPrice =
-      d.stackPrice ??
-      d.stack ??
-      null;
 
-    const singleStock =
-      d.singleStock ??
-      d.stock ??
-      null;
+  <div
+    id="stats"
+    class="stats"
+  ></div>
 
-    const stackStock =
-      d.stackStock ??
-      null;
 
-    const name =
-      d.itemName ??
-      d.name ??
-      search;
+  <div class="panel">
 
-    status.className = "ok";
-    status.textContent = "Live data received";
+    <div class="table-wrap">
 
-    result.innerHTML = `
-      <h3>${name}</h3>
-      <div class="result">
-        <div class="box">
-          <div class="label">Single Price</div>
-          <div class="value">${singlePrice ?? "—"}</div>
-        </div>
+      <table>
 
-        <div class="box">
-          <div class="label">Stack Price</div>
-          <div class="value">${stackPrice ?? "—"}</div>
-        </div>
+        <thead>
 
-        <div class="box">
-          <div class="label">Single Stock</div>
-          <div class="value">${singleStock ?? "—"}</div>
-        </div>
+          <tr>
+            <th>#</th>
+            <th>Item</th>
+            <th>Craft</th>
+            <th>Cost</th>
+            <th>Sale</th>
+            <th>Profit</th>
+            <th>Margin</th>
+            <th>7d Sales</th>
+            <th>Stock</th>
+            <th>Sell Days</th>
+            <th>Score</th>
+          </tr>
 
-        <div class="box">
-          <div class="label">Stack Stock</div>
-          <div class="value">${stackStock ?? "—"}</div>
-        </div>
+        </thead>
+
+        <tbody id="rows"></tbody>
+
+      </table>
+
+      <div
+        id="empty"
+        class="empty"
+        style="display:none"
+      >
+        No valid opportunities yet.
+        The scanner is still expanding
+        its craft cache.
       </div>
 
-      <pre style="white-space:pre-wrap;margin-top:20px;color:#9fb2c9">${JSON.stringify(d,null,2)}</pre>
-    `;
+    </div>
 
-  } catch (e) {
-    status.className = "error";
-    status.textContent = "Error: " + e.message;
-  }
-}
-</script>
-</body>
-</html>
+  </div>
+
+</main>
+
+
+<div
+  id="modalBg"
+  class="modal-bg"
+  onclick="closeModal(event)"
+>
+
+  <div
+    class="modal"
+    onclick="event.stopPropagation()"
+  >
+
+    <div class="modal-head">
+
+      <div>
+
+        <h2
+          id="modalTitle"
+          style="margin:0"
+        ></h2>
+
+        <div
+          id="modalSub"
+          class="muted"
+        ></div>
+
+      </div>
+
+      <button
+        class="close"
+        onclick="hideModal()"
+      >
+        Close
+      </button>
+
+    </div>
+
+
+    <div
+      id="modalStats"
+      class="grid"
+    ></div>
+
+
+    <h3>
+      Materials
+    </h3>
+
+
+    <div class="table-wrap">
+
+      <table class="materials">
+
+        <thead>
+
+          <tr>
+            <th>Material</th>
+            <th>Qty</th>
+            <th>Mode</th>
+            <th>Single</th>
+            <th>Stack</th>
+            <th>Stack Unit</th>
+            <th>Best Unit</th>
+            <th>Total</th>
+          </tr>
+
+        </thead>
+
+        <tbody id="materialRows"></
