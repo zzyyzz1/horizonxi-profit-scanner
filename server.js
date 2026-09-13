@@ -145,6 +145,96 @@ function isStackable(item) {
 
 
 /* =========================================================
+   LIQUIDITY / SPEED OF SALE
+========================================================= */
+
+function getLiquidityInfo(item) {
+  const stock =
+    Number(item?.ah?.currentStock || 0);
+
+  const volume7d =
+    Number(item?.ah?.single?.volume || 0);
+
+  const salesPerDay =
+    volume7d / 7;
+
+  let daysToSell = null;
+
+  if (salesPerDay > 0) {
+    daysToSell =
+      stock / salesPerDay;
+  }
+
+  let liquidity = "dead";
+
+  if (volume7d >= 1) {
+    liquidity = "very-slow";
+  }
+
+  if (volume7d >= 7) {
+    liquidity = "slow";
+  }
+
+  if (volume7d >= 14) {
+    liquidity = "medium";
+  }
+
+  if (volume7d >= 35) {
+    liquidity = "fast";
+  }
+
+  if (volume7d >= 70) {
+    liquidity = "very-fast";
+  }
+
+  let saturated = false;
+
+  if (
+    daysToSell != null &&
+    daysToSell > 14
+  ) {
+    saturated = true;
+  }
+
+  /*
+    شروط الدخول إلى Top 20:
+
+    - لازم فيه مبيعات حقيقية
+    - على الأقل 14 مبيعة خلال 7 أيام
+    - المخزون الحالي ما يحتاج أكثر من 14 يوم للتصريف
+  */
+
+  const top20Eligible =
+    volume7d >= 14 &&
+    (
+      daysToSell == null ||
+      daysToSell <= 14
+    );
+
+  return {
+    stock,
+    volume7d,
+
+    salesPerDay:
+      Number(
+        salesPerDay.toFixed(2)
+      ),
+
+    daysToSell:
+      daysToSell != null
+        ? Number(
+            daysToSell.toFixed(2)
+          )
+        : null,
+
+    liquidity,
+    saturated,
+    top20Eligible
+  };
+}
+
+
+/* =========================================================
    PRICES
 ========================================================= */
 
@@ -192,23 +282,13 @@ function getPriceInfo(item) {
   const singlePrice = getSinglePrice(item);
   const stackPrice = getStackPrice(item);
 
-  /*
-    IMPORTANT:
-
-    حالياً ما عندنا stack-size مؤكد من Market payload.
-    لذلك ما نقسم stack price على رقم نفترضه.
-
-    إذا الآيتم Non-stackable:
-      Single فقط.
-
-    إذا Stackable:
-      نحفظ سعر Single وStack الاثنين،
-      لكن الحسبة الحالية تستخدم Single للوحدة
-      إلى أن نضيف stack-size الرسمي.
-  */
-
   let selectedPrice = null;
   let selectedMode = "unpriced";
+
+  /*
+    حالياً نستخدم Single للوحدة.
+    Stack optimization الحقيقي بنضيفه بعد ما نثبت stack size.
+  */
 
   if (singlePrice != null) {
     selectedPrice = singlePrice;
@@ -222,15 +302,21 @@ function getPriceInfo(item) {
     stackPrice,
     selectedPrice,
     selectedMode,
+
     singleStock:
       Number(item?.ah?.currentStock || 0),
+
     stackStock:
       Number(item?.ah?.currentStackStock || 0),
+
     singleVolume7d:
       Number(item?.ah?.single?.volume || 0),
+
     stackVolume7d:
       Number(item?.ah?.stack?.volume || 0),
-    asOf: item?.asOf ?? null
+
+    asOf:
+      item?.asOf ?? null
   };
 }
 
@@ -246,23 +332,6 @@ function extractRecipeEntries(craftData) {
 
   return craftData.recipes
     .map(entry => {
-      /*
-        PSXI structure:
-
-        recipes: [
-          {
-            recipe: {
-              id,
-              result,
-              crystal,
-              ingredients,
-              skills
-            },
-            tiers: [...]
-          }
-        ]
-      */
-
       if (entry?.recipe) {
         return {
           recipe: entry.recipe,
@@ -273,7 +342,6 @@ function extractRecipeEntries(craftData) {
         };
       }
 
-      // fallback لو تغير شكل API
       return {
         recipe: entry,
         tiers:
@@ -294,7 +362,10 @@ async function calculateProfit(search) {
   const market = await getMarket();
   const items = getMarketItems(market);
 
-  const outputItem = findItem(items, search);
+  const outputItem = findItem(
+    items,
+    search
+  );
 
   if (!outputItem) {
     throw new Error(
@@ -304,22 +375,21 @@ async function calculateProfit(search) {
 
   const craftData =
     await psxiFetch(
-      CRAFT_ITEM_URL(outputItem.itemId)
+      CRAFT_ITEM_URL(
+        outputItem.itemId
+      )
     );
 
   const recipeEntries =
-    extractRecipeEntries(craftData);
+    extractRecipeEntries(
+      craftData
+    );
 
   if (!recipeEntries.length) {
     throw new Error(
       `No recipes found for ${outputItem.itemName}`
     );
   }
-
-  /*
-    حالياً نستخدم أول recipe.
-    لاحقاً Top-20 engine بيفحص كل recipe.
-  */
 
   const recipeEntry =
     recipeEntries[0];
@@ -331,12 +401,18 @@ async function calculateProfit(search) {
     recipeEntry.tiers;
 
   const outputQty =
-    Number(recipe?.result?.qty || 1);
+    Number(
+      recipe?.result?.qty || 1
+    );
 
   const outputPrice =
-    getPriceInfo(outputItem);
+    getPriceInfo(
+      outputItem
+    );
 
-  if (outputPrice.selectedPrice == null) {
+  if (
+    outputPrice.selectedPrice == null
+  ) {
     throw new Error(
       "Output item has no usable sale price"
     );
@@ -357,6 +433,7 @@ async function calculateProfit(search) {
   ------------------------- */
 
   const materials = [];
+
   let materialCost = 0;
   let missingPrice = false;
 
@@ -375,7 +452,9 @@ async function calculateProfit(search) {
       );
 
     const price =
-      getPriceInfo(crystalItem);
+      getPriceInfo(
+        crystalItem
+      );
 
     const qty = 1;
 
@@ -445,7 +524,9 @@ async function calculateProfit(search) {
       );
 
     const price =
-      getPriceInfo(marketItem);
+      getPriceInfo(
+        marketItem
+      );
 
     const qty =
       Number(
@@ -523,6 +604,74 @@ async function calculateProfit(search) {
 
 
   /* -------------------------
+     LIQUIDITY
+  ------------------------- */
+
+  const liquidity =
+    getLiquidityInfo(
+      outputItem
+    );
+
+
+  /* -------------------------
+     OPPORTUNITY SCORE
+  ------------------------- */
+
+  let opportunityScore = null;
+
+  if (
+    grossProfit != null &&
+    grossProfit > 0
+  ) {
+    const profitScore =
+      Math.min(
+        grossProfit / 1000,
+        100
+      );
+
+    const marginScore =
+      marginPct != null
+        ? Math.min(
+            Math.max(
+              marginPct,
+              0
+            ),
+            100
+          )
+        : 0;
+
+    const speedScore =
+      liquidity.salesPerDay > 0
+        ? Math.min(
+            liquidity.salesPerDay * 10,
+            100
+          )
+        : 0;
+
+    const saturationPenalty =
+      liquidity.saturated
+        ? 30
+        : 0;
+
+    opportunityScore =
+      (
+        profitScore * 0.45 +
+        marginScore * 0.20 +
+        speedScore * 0.35 -
+        saturationPenalty
+      );
+
+    opportunityScore =
+      Number(
+        Math.max(
+          0,
+          opportunityScore
+        ).toFixed(2)
+      );
+  }
+
+
+  /* -------------------------
      RESULT
   ------------------------- */
 
@@ -569,8 +718,7 @@ async function calculateProfit(search) {
 
       stackStock:
         Number(
-          outputItem?.ah
-            ?.currentStackStock || 0
+          outputItem?.ah?.currentStackStock || 0
         ),
 
       asOf:
@@ -620,6 +768,18 @@ async function calculateProfit(search) {
           : null
     },
 
+    liquidity,
+
+    opportunity: {
+      eligibleForTop20:
+        liquidity.top20Eligible &&
+        grossProfit != null &&
+        grossProfit > 0,
+
+      score:
+        opportunityScore
+    },
+
     pricing: {
       missingMaterialPrice:
         missingPrice,
@@ -628,7 +788,7 @@ async function calculateProfit(search) {
         "pending-stack-size-data",
 
       rule:
-        "Non-stackable outputs use Single only. Stack-capable items are detected separately; exact stack unit optimization will be enabled once verified stack-size data is added."
+        "Non-stackable outputs use Single only. Stack-capable materials are detected separately. Exact stack unit optimization will be enabled after verified stack-size data is added."
     }
   };
 }
@@ -658,7 +818,9 @@ app.get(
         await getMarket();
 
       const items =
-        getMarketItems(market);
+        getMarketItems(
+          market
+        );
 
       const item =
         findItem(
@@ -691,6 +853,9 @@ app.get(
         prices:
           getPriceInfo(item),
 
+        liquidity:
+          getLiquidityInfo(item),
+
         ah:
           item.ah,
 
@@ -720,7 +885,9 @@ app.get(
         await getMarket();
 
       const items =
-        getMarketItems(market);
+        getMarketItems(
+          market
+        );
 
       const item =
         findItem(
