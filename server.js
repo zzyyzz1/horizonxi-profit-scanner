@@ -1,6 +1,6 @@
 import express from "express";
 import * as cheerio from "cheerio";
-const app=express(); app.use(express.static("public"));
+const app=express(); app.use(express.static("."));
 const BASE="https://www.psxi.gg";
 async function getPage(path){
  const r=await fetch(BASE+path,{headers:{"user-agent":"HorizonXI-Profit-Scanner/1.0"}});
