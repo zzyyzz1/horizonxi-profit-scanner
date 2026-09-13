@@ -35,22 +35,25 @@ const TOP20_SCAN_COOLDOWN_MS =
 
 /* =========================================================
    CATEGORY RULES
-
-   automation is excluded because its recipe quantities /
-   market behavior should not be treated like normal crafts.
 ========================================================= */
 
 const EXCLUDED_CATEGORIES =
   new Set([
-    "automation" ,
+    "automation",
     "automatom"
   ]);
+
+function isExcludedCategory(item) {
+  return EXCLUDED_CATEGORIES.has(
+    String(
+      item?.categorySlug || ""
+    ).toLowerCase()
+  );
+}
 
 
 /* =========================================================
    VERIFIED STACK SIZES
-
-   Unknown stack sizes use Single price only.
 ========================================================= */
 
 const STACK_SIZE_BY_ID = {
@@ -81,7 +84,7 @@ function headers() {
       "application/json",
 
     "user-agent":
-      "HorizonXI-Profit-Scanner/2.1",
+      "HorizonXI-Profit-Scanner/2.2",
 
     Authorization:
       `Bearer ${PSXI_TOKEN}`
@@ -669,15 +672,9 @@ function buildCandidates(
     of items
   ) {
 
-    /*
-      Remove automation completely.
-    */
-
     if (
-      EXCLUDED_CATEGORIES.has(
-        String(
-          item.categorySlug || ""
-        ).toLowerCase()
+      isExcludedCategory(
+        item
       )
     ) {
       continue;
@@ -1112,17 +1109,9 @@ function analyzeRecipe(
   marketItems
 ) {
 
-  /*
-    Safety:
-    exclude automation here too,
-    even if somehow it reached this point.
-  */
-
   if (
-    EXCLUDED_CATEGORIES.has(
-      String(
-        outputItem.categorySlug || ""
-      ).toLowerCase()
+    isExcludedCategory(
+      outputItem
     )
   ) {
 
@@ -1151,11 +1140,6 @@ function analyzeRecipe(
       outputItem.itemId
     );
 
-
-  /*
-    HQ result safety:
-    don't treat HQ output as guaranteed.
-  */
 
   if (
     actualResultId !==
@@ -1453,37 +1437,12 @@ function analyzeRecipe(
 
 async function runTop20Scan() {
 
-  const now =
-    Date.now();
-
-
-  if (
-    top20Cache &&
-    now - top20CacheTime <
-      TOP20_SCAN_COOLDOWN_MS
-  ) {
-
-    return {
-
-      ...top20Cache,
-
-      cachedResponse:
-        true,
-
-      secondsUntilNextExpansion:
-        Math.ceil(
-          (
-            TOP20_SCAN_COOLDOWN_MS -
-            (
-              now -
-              top20CacheTime
-            )
-          ) /
-          1000
-        )
-    };
-  }
-
+  /*
+    مهم:
+    ما نعيد Top20 قديم محفوظ.
+    كل طلب يعيد بناء الترتيب من Craft Cache الحالي،
+    حتى ما تبقى نتائج مستبعدة قديمة مثل Armor Plate II.
+  */
 
   const market =
     await getMarket();
@@ -1600,10 +1559,6 @@ async function runTop20Scan() {
   }
 
 
-  /*
-    Reuse everything already cached.
-  */
-
   for (
     const candidate
     of candidates
@@ -1647,10 +1602,6 @@ async function runTop20Scan() {
     }
   }
 
-
-  /*
-    10 new craft API calls per expansion.
-  */
 
   const MAX_NEW_CALLS =
     10;
@@ -1805,8 +1756,34 @@ async function runTop20Scan() {
   );
 
 
+  /*
+    FINAL SAFETY FILTER:
+    حتى لو نتيجة قديمة وصلت من أي cache،
+    نعيد فحص category قبل ما تدخل Top 20.
+  */
+
+  const safeRanked =
+    ranked.filter(
+      result => {
+
+        const marketItem =
+          findItemById(
+            marketItems,
+            result.itemId
+          );
+
+        return (
+          marketItem &&
+          !isExcludedCategory(
+            marketItem
+          )
+        );
+      }
+    );
+
+
   const top20 =
-    ranked.slice(
+    safeRanked.slice(
       0,
       20
     );
@@ -1833,7 +1810,7 @@ async function runTop20Scan() {
     scannedThisRun,
 
     validOpportunities:
-      ranked.length,
+      safeRanked.length,
 
     excludedStats,
 
@@ -1872,7 +1849,10 @@ async function runTop20Scan() {
         true
     },
 
-    top20
+    top20,
+
+    cachedResponse:
+      false
   };
 
 
@@ -1883,13 +1863,7 @@ async function runTop20Scan() {
     Date.now();
 
 
-  return {
-
-    ...response,
-
-    cachedResponse:
-      false
-  };
+  return response;
 }
 
 
@@ -1998,10 +1972,8 @@ app.get(
           item,
 
         excludedByCategory:
-          EXCLUDED_CATEGORIES.has(
-            String(
-              item.categorySlug || ""
-            ).toLowerCase()
+          isExcludedCategory(
+            item
           ),
 
         craft
@@ -2026,7 +1998,7 @@ app.listen(
   () => {
 
     console.log(
-      `HorizonXI Profit Scanner v2.1 running on ${PORT}`
+      `HorizonXI Profit Scanner v2.2 running on ${PORT}`
     );
   }
 );
